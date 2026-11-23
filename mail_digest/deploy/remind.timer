@@ -1,0 +1,9 @@
+[Unit]
+Description=Check for urgent deadlines every hour during the day
+
+[Timer]
+# 07:05、08:05 …… 23:05，夜里不查
+OnCalendar=*-*-* 07..23:05:00
+
+[Install]
+WantedBy=timers.target

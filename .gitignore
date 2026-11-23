@@ -1,0 +1,27 @@
+# 密码和个人配置（只在树莓派上）
+.env
+config.toml
+config.toml.bak*
+*.bak
+
+# 运行时数据（只在树莓派上）
+mail_digest/state.json
+mail_digest/state.tmp
+mail_digest/deadlines.json
+mail_digest/deadlines.lock
+mail_digest/ilias_state.json
+mail_digest/bot_state.json
+mail_digest/todos.json
+mail_digest/timetable.json
+mail_digest/*.tmp
+mail_digest/backup/
+
+# 个人笔记：只留在本地，对外的说明写在 README 里
+PLAN.md
+CLAUDE.md
+.claude/
+
+# 编辑器和 Python 缓存
+__pycache__/
+.vscode/
+.idea/

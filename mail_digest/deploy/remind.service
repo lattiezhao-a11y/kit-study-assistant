@@ -1,0 +1,10 @@
+[Unit]
+Description=Urgent deadline reminder (less than 3 hours left)
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+User=pi
+WorkingDirectory=/home/pi/mail_digest
+ExecStart=/usr/bin/python3 /home/pi/mail_digest/remind.py

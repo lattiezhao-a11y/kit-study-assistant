@@ -33,7 +33,7 @@ Studying at KIT, the things you have to keep track of are spread over many place
 - **Add new plans any time.** Your timetable, next month's talk, "renew the residence permit": tell the bot once and it's recorded.
 
 **One bot instead of all those tools.**
-(Not the main point: existing tools each solve only one piece. ILIAS downloaders such as [PFERD](https://github.com/Garmelon/PFERD) only fetch files; deadline bots mostly support only Canvas and Moodle; mail apps know nothing about your courses.)
+(Existing tools each solve only one piece. ILIAS downloaders such as [PFERD](https://github.com/Garmelon/PFERD) only fetch files; deadline bots mostly support only Canvas and Moodle; mail apps know nothing about your courses.)
 
 With just this bot, you see every important date of your studies.
 

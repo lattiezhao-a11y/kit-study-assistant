@@ -33,7 +33,7 @@ Im Studium am KIT ist alles, was du im Blick behalten musst, über viele Orte ve
 - **Neue Termine jederzeit hinzufügen.** Stundenplan, das Referat nächsten Monat, „Aufenthaltstitel verlängern“: einmal dem Bot sagen, und es ist notiert.
 
 **Ein Bot statt all dieser Tools.**
-(Nebensache: Vorhandene Tools lösen jeweils nur ein Stück. ILIAS-Downloader wie [PFERD](https://github.com/Garmelon/PFERD) holen nur Dateien; Frist-Bots gibt es meist nur für Canvas und Moodle; Mail-Apps wissen nichts über deine Kurse.)
+(Vorhandene Tools lösen jeweils nur ein Stück. ILIAS-Downloader wie [PFERD](https://github.com/Garmelon/PFERD) holen nur Dateien; Frist-Bots gibt es meist nur für Canvas und Moodle; Mail-Apps wissen nichts über deine Kurse.)
 
 Mit nur diesem Bot siehst du alle wichtigen Termine deines Studiums.
 

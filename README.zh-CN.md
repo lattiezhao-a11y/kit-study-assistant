@@ -25,7 +25,7 @@
 - **可以随时添加新的日程。** 课表、下个月的报告、"记得续签居留"，跟机器人说一句就记下了。
 
 **用一个 bot 解决所有工具。**
-（不是重点：已有的工具只能解决其中一块。[PFERD](https://github.com/Garmelon/PFERD) 这类 ILIAS 下载器只下载文件；截止时间提醒机器人大多只支持 Canvas 和 Moodle；邮件 App 不知道你在上哪些课。）
+（已有的工具只能解决其中一块。[PFERD](https://github.com/Garmelon/PFERD) 这类 ILIAS 下载器只下载文件；截止时间提醒机器人大多只支持 Canvas 和 Moodle；邮件 App 不知道你在上哪些课。）
 
 只用这个 bot，你就可以看到所有重要的学习日程。
 

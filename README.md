@@ -4,12 +4,13 @@
 
 **English** · [中文](README.zh-CN.md) · [Deutsch](README.de.md)
 
-A lightweight, self-hosted AI assistant for KIT students. It runs on a Raspberry Pi or any small server (Docker), and talks to you through Telegram.
-It reads your university email and ILIAS (KIT's learning platform), finds every deadline, and reminds you before it's too late.
-You can also ask it questions in plain language. The bot speaks Chinese or German, your choice.
+**One Telegram chat for everything a KIT student has to keep track of.**
 
-- **Zero dependencies:** Python standard library only, about 3,000 lines in total
-- **Cheap:** if nothing changed, a run costs 0 tokens. One chat message costs about 500–3,000 tokens
+A self-hosted AI assistant that reads your inboxes, your ILIAS courses and their forums, and keeps your deadlines, to-dos and timetable in one place.
+It tells you only what needs you, at the right time, and you can ask it anything in plain language.
+It runs on a Raspberry Pi or any small server (Docker) and speaks Chinese or German.
+
+- **Ultra-lightweight:** 0 tokens when nothing is new; when something is, tokens are spent only on the new part. Python standard library only, zero dependencies
 - **Read-only by design:** it never sends, deletes, moves or marks email as read
 
 > I built this for my own semester. It has been running every day on a Raspberry Pi 4 since November 2026.
@@ -22,32 +23,48 @@ You can also ask it questions in plain language. The bot speaks Chinese or Germa
 </p>
 -->
 
-## The problem
+## Why I built this
 
-Every course on ILIAS publishes deadlines differently:
+Studying at KIT, the things you have to keep track of are spread over many places:
 
-| Course | Where the deadline lives |
+- **Several inboxes.** University mail, Gmail, Hotmail. The Rückmeldung fee notice or a mail from your professor sits between newsletters, login alerts and verification codes.
+- **ILIAS, one course at a time.** Every course puts its deadlines somewhere else: in the calendar, in a folder name like `Übungsblatt 03 (16.11.2026 - 23.11.2026)`, in a table on the course page, or only inside the exercise PDF.
+- **Changes are tracked whenever they happen.** A deadline postponed by email, a new reply in a forum: it records them and tells you.
+- **Add new plans any time.** Your timetable, next month's talk, "renew the residence permit": tell the bot once and it's recorded.
+
+**One bot instead of all those tools.**
+(Not the main point: existing tools each solve only one piece. ILIAS downloaders such as [PFERD](https://github.com/Garmelon/PFERD) only fetch files; deadline bots mostly support only Canvas and Moodle; mail apps know nothing about your courses.)
+
+With just this bot, you see every important date of your studies.
+
+## A day with the assistant
+
+| When | What arrives in Telegram |
 |---|---|
-| Course A | In the ILIAS calendar (iCal) |
-| Course B | In a folder name: `Übungsblatt 03 (16.11.2026 - 23.11.2026)` |
-| Course C | In a table on the course page: "Übung 1–7, jeweils 12 Uhr" |
-| Course D | Only inside the exercise sheet PDF |
+| 07:00 | ☀️ **Morning summary:** deadlines and to-dos for today, tomorrow and the next 3 days |
+| 01:30 · 07:30 · 13:30 · 19:30 | 📬 **Email digest:** new mail sorted into *must act* / *maybe read* / *ignored*, each with its subject and a one-line summary. New ILIAS deadlines get a short message of their own |
+| 19:30 | 💬 **Forum digest:** one sentence per ILIAS thread with new posts |
+| hourly, 07–23 | ⏰ **Urgent reminder** for anything due within 3 hours |
+| any time | 🤖 **Chat:** ask questions, add to-dos, mark homework as done, change settings |
 
-On top of that, deadlines get postponed by email, and the important emails are buried under newsletters.
-Other tools only cover part of this. ILIAS downloaders such as [PFERD](https://github.com/Garmelon/PFERD) fetch files but don't read deadlines.
-Deadline bots usually target Canvas or Moodle, which have a proper API.
+When nothing is new, it stays quiet.
 
-## What it does
+## What it brings together
 
-| | Feature | When |
+| Source | What it reads | What you get |
 |---|---|---|
-| 📬 | **Email digest:** classifies new mail from KIT and Gmail into *must act* / *maybe read* / *ignored*. Each email gets its original subject plus a one-line summary in your language. Ignored emails are still listed, so you can spot mistakes | 01:30, 07:30, 13:30, 19:30 |
-| 📚 | **ILIAS deadline sync:** reads the iCal feed, course pages, folder names and new exercise PDFs. An LLM extracts the deadlines | same runs |
-| 🔁 | **Postponements:** if an email says a deadline moved, the old date is crossed out and the new one is added | same runs |
-| 💬 | **Forum digest:** one sentence per ILIAS forum thread with new posts | daily, 19:30 |
-| ☀️ | **Morning summary:** deadlines and to-dos for the next 3 days | 07:00 |
-| ⏰ | **Urgent reminder:** anything due within 3 hours | hourly, 07–23 |
-| 🤖 | **Chat bot:** "What's still due this week?", "I submitted BS sheet 3", "What did the tutor's email say?", "What's on tomorrow?" | always on |
+| 📬 **Email**: KIT, Gmail (Hotmail via forwarding) | new mail since the last run, over read-only IMAP | a sorted digest; deadlines found in mail go into your reminders; if a mail postpones a deadline, the old date is crossed out and the new one added; an optional *job offers* section while you're job hunting |
+| 📚 **ILIAS courses** | calendar feed, course pages, folder names, new exercise PDFs | one deadline list across all your courses |
+| 💬 **ILIAS forums** | threads with new posts | a daily one-sentence-per-thread summary |
+| 🗓️ **Your timetable and to-dos** | what you tell the bot | "What's on tomorrow?" with classes, deadlines and to-dos; dated to-dos join the morning summary and reminders |
+| 🙋 **You** | what you delete, what you say you don't care about | it learns: after you confirm, "not interested: short-term exchange programs" goes into your profile, and such mails are ignored from then on |
+
+Deadlines from email are split into **duties** (homework, exam registration, Rückmeldung, visa: missing them has consequences) and **chances** (scholarships, event sign-ups, competitions).
+Duties get reminders. Chances are only mentioned in the digest, so your reminder list doesn't fill up with things you never planned to do.
+
+## Talk to it
+
+"What's still due this week?" · "I submitted BS sheet 3" · "What did the tutor's email say?" · "What's on tomorrow?" · "Remind me to pay the rent on the 1st" · "Stop showing me LinkedIn mails"
 
 The bot has 19 tools:
 
@@ -64,23 +81,35 @@ The bot has 19 tools:
 
 ```mermaid
 flowchart LR
-    subgraph Pi["Raspberry Pi / Docker (scheduled jobs)"]
-        D[digest.py<br/>email → classify] --> S[(deadlines.json)]
-        I[ilias_sync.py<br/>ILIAS → extract deadlines] --> S
-        I --> F[forums.py<br/>forum digest]
-        R[remind.py<br/>0 tokens] --> S
-        B[bot.py + tools.py<br/>chat agent] <--> S
+    subgraph SRC["Where your information lives"]
+        MAIL[("Email<br/>KIT · Gmail · Hotmail")]
+        ILIAS[("ILIAS courses<br/>calendar · pages · PDFs")]
+        FORUM[("ILIAS forums")]
     end
-    IMAP[(KIT / Gmail<br/>IMAP, read-only)] --> D
-    ILIAS[(ILIAS)] --> I
-    D & I & F & R & B --> TG[Telegram]
-    TG --> B
-    D & I & F & B -.-> LLM[LLM API<br/>OpenAI-compatible]
+    subgraph BOX["Raspberry Pi / Docker"]
+        D["digest.py<br/>sort email"]
+        I["ilias_sync.py<br/>find deadlines"]
+        F["forums.py<br/>forum digest"]
+        DATA[("deadlines · to-dos<br/>timetable · settings")]
+        R["remind.py<br/>summary + reminders<br/>0 tokens"]
+        B["bot.py + tools.py<br/>chat"]
+    end
+    MAIL --> D
+    ILIAS --> I
+    FORUM --> F
+    D --> DATA
+    I --> DATA
+    DATA --> R
+    B <--> DATA
+    D & I & F & R --> TG["Telegram<br/>one chat"]
+    TG <--> B
+    D & I & F & B -.-> LLM["LLM API<br/>OpenAI-compatible"]
 ```
 
-- **Scheduled jobs are plain scripts, not agents.** Each run makes at most one batched LLM call.
-- **The chat bot is a minimal tool-calling loop** (`bot.py`, about 400 lines). It uses Telegram long polling, so no port is opened. It only answers your own chat ID and forgets the conversation after 1 hour idle.
-- **One shared data file.** Email, ILIAS and the bot all write to `deadlines.json`, protected by a file lock.
+- **Every source has its own small script** that runs on a timer (systemd on the Pi, `scheduler.py` in Docker). They are plain scripts, not agents: each run makes at most one batched LLM call.
+- **They all meet in the same data files.** Email, ILIAS and the bot write to one deadline list (`deadlines.json`, protected by a file lock), so a deadline from a PDF and its postponement from an email end up in the same place.
+- **The chat bot is a minimal tool-calling loop** (`bot.py`, about 500 lines). It uses Telegram long polling, so no port is opened. It only answers your own chat ID and forgets the conversation after 1 hour idle.
+- **Adding a source** means one more script that writes to the same files and sends to the same chat.
 
 ## Design decisions
 
@@ -107,6 +136,7 @@ If a mailbox or the LLM fails, the digest still goes out and says what broke. Un
 
 **Safety.**
 - Mailboxes are opened read-only and fetched with `BODY.PEEK`, so mail is never marked as read. There is no SMTP code at all.
+- You decide per mailbox whether its mail may be sent to the LLM.
 - The LLM can only *propose* a settings change. The program applies it after you reply «确认» or «ja» ("confirm"), and backs up the config first.
 - Forum posts are sent to the LLM without names, only as "teacher/tutor" or "student".
 - Prompts tell the model to ignore instructions found inside emails. An invalid category from the model counts as *unclassified*.

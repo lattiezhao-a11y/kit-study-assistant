@@ -4,42 +4,67 @@
 
 [English](README.md) · [中文](README.zh-CN.md) · **Deutsch**
 
-Ein schlanker, selbst gehosteter KI-Assistent für Studierende am KIT. Er läuft auf einem Raspberry Pi oder einem beliebigen kleinen Server (Docker) und spricht über Telegram mit dir.
-Er liest deine Uni-Mails und ILIAS, findet jede Abgabefrist und erinnert dich, bevor es zu spät ist.
-Du kannst ihm auch ganz normal Fragen stellen. Der Bot spricht Deutsch oder Chinesisch, je nachdem, was du wählst.
+**Ein Telegram-Chat für alles, was du im Studium am KIT im Blick behalten musst.**
 
-- **Keine Abhängigkeiten:** nur die Python-Standardbibliothek, insgesamt etwa 3.000 Zeilen
-- **Günstig:** Hat sich nichts geändert, kostet ein Lauf 0 Token. Eine Chatnachricht kostet etwa 500–3.000 Token
+Ein selbst gehosteter KI-Assistent: Er liest deine Postfächer, deine ILIAS-Kurse und ihre Foren und hält Fristen, To-dos und Stundenplan an einem Ort zusammen.
+Er meldet sich nur, wenn etwas dich betrifft, und zur richtigen Zeit. Du kannst ihn auch ganz normal fragen.
+Er läuft auf einem Raspberry Pi oder einem beliebigen kleinen Server (Docker) und spricht Deutsch oder Chinesisch.
+
+- **Ultraleicht:** Gibt es nichts Neues, kostet ein Lauf 0 Token; gibt es etwas Neues, werden Token nur für das Neue ausgegeben. Nur die Python-Standardbibliothek, keine Abhängigkeiten
 - **Grundsätzlich nur lesend:** Er sendet, löscht oder verschiebt keine Mails und markiert sie auch nicht als gelesen
 
 > Ich habe das für mein eigenes Semester gebaut. Seit November 2026 läuft es jeden Tag auf einem Raspberry Pi 4.
 
-## Das Problem
+<!-- Screenshots: 2–3 Bilder in docs/screenshots/ ablegen und den Kommentar entfernen.
+<p>
+  <img src="docs/screenshots/morning.png" width="260" alt="Morgenübersicht">
+  <img src="docs/screenshots/digest.png" width="260" alt="Mail-Zusammenfassung">
+  <img src="docs/screenshots/chat.png" width="260" alt="Chat mit dem Bot">
+</p>
+-->
 
-Jeder Kurs in ILIAS veröffentlicht Fristen anders:
+## Warum ich das gebaut habe
 
-| Kurs | Wo die Frist steht |
+Im Studium am KIT ist alles, was du im Blick behalten musst, über viele Orte verteilt:
+
+- **Mehrere Postfächer.** Uni-Mail, Gmail, Hotmail. Die Rückmeldung oder eine Mail vom Professor steckt zwischen Newslettern, Login-Warnungen und Bestätigungscodes.
+- **ILIAS, jeder Kurs anders.** Jeder Kurs legt seine Fristen woanders ab: im Kalender, in einem Ordnernamen wie `Übungsblatt 03 (16.11.2026 - 23.11.2026)`, in einer Tabelle auf der Kursseite oder nur im Übungsblatt-PDF.
+- **Änderungen werden festgehalten, wann immer sie passieren.** Eine Frist wird per Mail verschoben, im Forum gibt es eine neue Antwort: Er hält es fest und sagt dir Bescheid.
+- **Neue Termine jederzeit hinzufügen.** Stundenplan, das Referat nächsten Monat, „Aufenthaltstitel verlängern“: einmal dem Bot sagen, und es ist notiert.
+
+**Ein Bot statt all dieser Tools.**
+(Nebensache: Vorhandene Tools lösen jeweils nur ein Stück. ILIAS-Downloader wie [PFERD](https://github.com/Garmelon/PFERD) holen nur Dateien; Frist-Bots gibt es meist nur für Canvas und Moodle; Mail-Apps wissen nichts über deine Kurse.)
+
+Mit nur diesem Bot siehst du alle wichtigen Termine deines Studiums.
+
+## Ein Tag mit dem Assistenten
+
+| Wann | Was in Telegram ankommt |
 |---|---|
-| Kurs A | Im ILIAS-Kalender (iCal) |
-| Kurs B | In einem Ordnernamen: `Übungsblatt 03 (16.11.2026 - 23.11.2026)` |
-| Kurs C | In einer Tabelle auf der Kursseite: „Übung 1–7, jeweils 12 Uhr“ |
-| Kurs D | Nur im PDF des Übungsblatts |
+| 07:00 | ☀️ **Morgenübersicht:** Fristen und To-dos für heute, morgen und die nächsten 3 Tage |
+| 01:30 · 07:30 · 13:30 · 19:30 | 📬 **Mail-Zusammenfassung:** neue Mails, sortiert in *Zu erledigen* / *Lesenswert* / *Ignoriert*, jeweils mit Betreff und einem Satz Zusammenfassung. Neue ILIAS-Fristen bekommen eine eigene kurze Nachricht |
+| 19:30 | 💬 **Forum-Zusammenfassung:** ein Satz pro ILIAS-Thread mit neuen Beiträgen |
+| stündlich, 07–23 Uhr | ⏰ **Dringende Erinnerung** für alles, was in weniger als 3 Stunden fällig ist |
+| jederzeit | 🤖 **Chat:** Fragen stellen, To-dos eintragen, Abgaben als erledigt markieren, Einstellungen ändern |
 
-Dazu kommen Fristverlängerungen per Mail, und die wichtigen Mails gehen zwischen Newslettern unter.
-Andere Tools decken nur einen Teil davon ab. ILIAS-Downloader wie [PFERD](https://github.com/Garmelon/PFERD) holen Dateien, lesen aber keine Fristen.
-Frist-Bots gibt es meist für Canvas oder Moodle, die eine richtige API haben.
+Gibt es nichts Neues, bleibt er still.
 
-## Was er macht
+## Was er zusammenführt
 
-| | Funktion | Wann |
+| Quelle | Was er liest | Was du bekommst |
 |---|---|---|
-| 📬 | **Mail-Zusammenfassung:** sortiert neue Mails von KIT und Gmail in *Zu erledigen* / *Lesenswert* / *Ignoriert*. Jede Mail bekommt ihren Originalbetreff und eine Zusammenfassung in einem Satz in deiner Sprache. Ignorierte Mails werden trotzdem aufgelistet, damit du Fehler bemerkst | 01:30, 07:30, 13:30, 19:30 |
-| 📚 | **ILIAS-Fristen:** liest den iCal-Feed, Kursseiten, Ordnernamen und neue Übungsblatt-PDFs. Eine KI zieht die Fristen heraus | dieselben Läufe |
-| 🔁 | **Verschiebungen:** Steht in einer Mail, dass eine Frist verschoben wurde, wird das alte Datum durchgestrichen und das neue eingetragen | dieselben Läufe |
-| 💬 | **Forum-Zusammenfassung:** ein Satz pro ILIAS-Forenthread mit neuen Beiträgen | täglich, 19:30 |
-| ☀️ | **Morgenübersicht:** Fristen und To-dos der nächsten 3 Tage | 07:00 |
-| ⏰ | **Dringende Erinnerung:** alles, was in weniger als 3 Stunden fällig ist | stündlich, 07–23 Uhr |
-| 🤖 | **Chat-Bot:** „Was ist diese Woche noch offen?“, „BS-Blatt 3 ist abgegeben“, „Was stand in der Mail vom Tutor?“, „Was steht morgen an?“ | immer |
+| 📬 **Mail**: KIT, Gmail (Hotmail per Weiterleitung) | neue Mails seit dem letzten Lauf, über IMAP nur lesend | eine sortierte Zusammenfassung; Fristen aus Mails landen in deinen Erinnerungen; verschiebt eine Mail eine Frist, wird das alte Datum durchgestrichen und das neue eingetragen; optional ein Abschnitt *Jobangebote*, solange du suchst |
+| 📚 **ILIAS-Kurse** | Kalender-Feed, Kursseiten, Ordnernamen, neue Übungsblatt-PDFs | eine Fristenliste über alle deine Kurse |
+| 💬 **ILIAS-Foren** | Threads mit neuen Beiträgen | täglich ein Satz pro Thread |
+| 🗓️ **Dein Stundenplan und deine To-dos** | was du dem Bot sagst | „Was steht morgen an?“ mit Vorlesungen, Fristen und To-dos; To-dos mit Datum kommen in die Morgenübersicht und die Erinnerungen |
+| 🙋 **Du selbst** | was du löschst, was dich nicht interessiert | er lernt dazu: Nach deiner Bestätigung kommt „Kein Interesse: Kurzzeit-Austauschprogramme“ in dein Profil, und solche Mails werden ab dann ignoriert |
+
+Fristen aus Mails werden in **Pflichten** (Übungsblätter, Prüfungsanmeldung, Rückmeldung, Visum: Verpassen hat Folgen) und **Chancen** (Stipendien, Veranstaltungsanmeldungen, Wettbewerbe) aufgeteilt.
+Pflichten bekommen Erinnerungen. Chancen werden nur in der Zusammenfassung erwähnt, damit sich deine Erinnerungsliste nicht mit Dingen füllt, die du nie vorhattest.
+
+## Mit ihm reden
+
+„Was ist diese Woche noch offen?“ · „BS-Blatt 3 ist abgegeben“ · „Was stand in der Mail vom Tutor?“ · „Was steht morgen an?“ · „Erinner mich am 1. an die Miete“ · „Zeig mir keine LinkedIn-Mails mehr“
 
 Der Bot hat 19 Werkzeuge:
 
@@ -56,23 +81,35 @@ Der Bot hat 19 Werkzeuge:
 
 ```mermaid
 flowchart LR
-    subgraph Pi["Raspberry Pi / Docker (geplante Jobs)"]
-        D[digest.py<br/>Mails → einordnen] --> S[(deadlines.json)]
-        I[ilias_sync.py<br/>ILIAS → Fristen finden] --> S
-        I --> F[forums.py<br/>Forum-Zusammenfassung]
-        R[remind.py<br/>0 Token] --> S
-        B[bot.py + tools.py<br/>Chat-Agent] <--> S
+    subgraph SRC["Wo deine Informationen liegen"]
+        MAIL[("Mail<br/>KIT · Gmail · Hotmail")]
+        ILIAS[("ILIAS-Kurse<br/>Kalender · Seiten · PDFs")]
+        FORUM[("ILIAS-Foren")]
     end
-    IMAP[(KIT / Gmail<br/>IMAP, nur lesend)] --> D
-    ILIAS[(ILIAS)] --> I
-    D & I & F & R & B --> TG[Telegram]
-    TG --> B
-    D & I & F & B -.-> LLM[KI-API<br/>OpenAI-kompatibel]
+    subgraph BOX["Raspberry Pi / Docker"]
+        D["digest.py<br/>Mails einordnen"]
+        I["ilias_sync.py<br/>Fristen finden"]
+        F["forums.py<br/>Forum-Zusammenfassung"]
+        DATA[("Fristen · To-dos<br/>Stundenplan · Einstellungen")]
+        R["remind.py<br/>Übersicht + Erinnerungen<br/>0 Token"]
+        B["bot.py + tools.py<br/>Chat"]
+    end
+    MAIL --> D
+    ILIAS --> I
+    FORUM --> F
+    D --> DATA
+    I --> DATA
+    DATA --> R
+    B <--> DATA
+    D & I & F & R --> TG["Telegram<br/>ein Chat"]
+    TG <--> B
+    D & I & F & B -.-> LLM["KI-API<br/>OpenAI-kompatibel"]
 ```
 
-- **Die geplanten Jobs sind einfache Skripte, keine Agenten.** Jeder Lauf macht höchstens einen gebündelten KI-Aufruf.
-- **Der Chat-Bot ist eine minimale Tool-Calling-Schleife** (`bot.py`, etwa 400 Zeilen). Er nutzt Telegram-Long-Polling, es wird also kein Port geöffnet. Er antwortet nur deiner eigenen Chat-ID und vergisst das Gespräch nach 1 Stunde Pause.
-- **Eine gemeinsame Datendatei.** Mails, ILIAS und der Bot schreiben alle in `deadlines.json`, geschützt durch eine Dateisperre.
+- **Jede Quelle hat ihr eigenes kleines Skript**, das nach Zeitplan läuft (auf dem Pi mit systemd, in Docker mit `scheduler.py`). Es sind einfache Skripte, keine Agenten: Jeder Lauf macht höchstens einen gebündelten KI-Aufruf.
+- **Alle landen in denselben Datendateien.** Mails, ILIAS und der Bot schreiben in eine Fristenliste (`deadlines.json`, geschützt durch eine Dateisperre). So kommen eine Frist aus einem PDF und ihre Verschiebung per Mail an derselben Stelle an.
+- **Der Chat-Bot ist eine minimale Tool-Calling-Schleife** (`bot.py`, etwa 500 Zeilen). Er nutzt Telegram-Long-Polling, es wird also kein Port geöffnet. Er antwortet nur deiner eigenen Chat-ID und vergisst das Gespräch nach 1 Stunde Pause.
+- **Eine neue Quelle hinzufügen** heißt: ein weiteres Skript, das in dieselben Dateien schreibt und an denselben Chat sendet.
 
 ## Designentscheidungen
 
@@ -99,6 +136,7 @@ Fällt ein Postfach oder die KI aus, kommt die Zusammenfassung trotzdem und sagt
 
 **Sicherheit.**
 - Postfächer werden nur lesend geöffnet und mit `BODY.PEEK` abgerufen, Mails werden also nie als gelesen markiert. Es gibt überhaupt keinen SMTP-Code.
+- Du entscheidest pro Postfach, ob seine Mails an die KI gehen dürfen.
 - Die KI kann eine Einstellungsänderung nur *vorschlagen*. Das Programm führt sie erst aus, wenn du mit «ja» (bzw. «确认») bestätigst, und sichert die Konfiguration vorher.
 - Forenbeiträge gehen ohne Namen an die KI, nur als „Lehrende/Tutor“ oder „Studierende“.
 - Die Prompts weisen das Modell an, Anweisungen in Mails zu ignorieren. Eine ungültige Kategorie vom Modell zählt als *nicht eingeordnet*.
@@ -120,7 +158,7 @@ docker compose run --rm assistant python3 digest.py --dry-run   # Test, sendet n
 docker compose up -d                                            # starten
 ```
 
-📖 **Schritt-für-Schritt-Anleitung, vom leeren Cloud-Server bis zur ersten Telegram-Nachricht: [docs/deploy-cloud.de.md](docs/deploy-cloud.de.md)**
+📖 **Schritt-für-Schritt-Anleitung, vom leeren Cloud-Server bis zur ersten Telegram-Nachricht: [docs/deploy-cloud.de.md](docs/deploy-cloud.de.md)** ([English](docs/deploy-cloud.md) · [中文](docs/deploy-cloud.zh-CN.md))
 
 Im Container ersetzt ein kleiner Zeitplaner (`scheduler.py`) systemd. Er hält denselben Zeitplan ein, hält den Bot am Laufen und holt eine verpasste Mail-Prüfung nach einem Neustart nach.
 Deine Einstellungen und Daten liegen in `data/`, getrennt vom Code.

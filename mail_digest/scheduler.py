@@ -1,17 +1,9 @@
 #!/usr/bin/env python3
-"""
-代替 systemd 的小调度器：Docker 里用它（树莓派上继续用 deploy/ 里的 systemd 定时器）
+"""Small systemd replacement for Docker; Raspberry Pi deployments keep systemd timers.
 
-  - bot.py 一直运行；意外退出了，等 30 秒自动重启
-  - 按 JOBS 的时间表运行定时脚本（德国时间），和 deploy/*.timer 完全一样
-  - 容器关着的时候错过了邮件检查，启动后马上补一次（像 systemd 的 Persistent=true）
-  - 同一个任务上一次还没跑完，就跳过这一次
-
-用法：
-  python3 scheduler.py              正常运行（Docker 的启动命令）
-  python3 scheduler.py --no-bot     只跑定时任务，不开聊天机器人
-  python3 scheduler.py --list       打印时间表和接下来的运行时间，然后退出
-  python3 scheduler.py --run 名字   马上运行某个任务一次（测试用，例如 --run morning）
+It keeps bot.py running, runs scheduled scripts in German time, catches up missed
+email checks after container downtime, and skips a job whose previous invocation is
+still running. Use --no-bot, --list, or --run NAME for the respective modes.
 """
 from __future__ import annotations
 
@@ -30,19 +22,19 @@ from digest import DATA
 
 HERE = Path(__file__).resolve().parent
 TZ = ZoneInfo("Europe/Berlin")
-STATE_FILE = DATA / "scheduler_state.json"   # 每个任务上次在哪个时间点运行过
-TICK = 20                 # 每隔几秒看一次时间
-ON_TIME = 120             # 不补跑的任务：到点后这么多秒内才运行（容器重启后不会补发旧提醒）
-BOT_RESTART_DELAY = 30    # 机器人退出后等几秒再重启
+STATE_FILE = DATA / "scheduler_state.json"   # Last scheduled slot executed for each job.
+TICK = 20                 # Seconds between time checks.
+ON_TIME = 120             # Execution window for non-catch-up jobs; old reminders are not sent after restart.
+BOT_RESTART_DELAY = 30    # Seconds to wait before restarting a stopped bot.
 
-# name: 几点（hours）、几分（minute）、按顺序运行哪些脚本、错过了要不要补跑
+# name: hour(s), minute, scripts to run in order, and whether missed runs catch up.
 JOBS: dict[str, dict] = {
     "mail":    {"hours": [1, 7, 13, 19], "minute": 30, "catch_up": True,
-                "cmds": [["digest.py"], ["ilias_sync.py"]]},           # 邮件 + ILIAS
+                "cmds": [["digest.py"], ["ilias_sync.py"]]},           # Email and ILIAS.
     "morning": {"hours": [7], "minute": 0, "catch_up": False,
-                "cmds": [["remind.py", "--morning"]]},                 # 早上汇总
+                "cmds": [["remind.py", "--morning"]]},                 # Morning summary.
     "remind":  {"hours": list(range(7, 24)), "minute": 5, "catch_up": False,
-                "cmds": [["remind.py"]]},                              # 3 小时内截止的提醒
+                "cmds": [["remind.py"]]},                              # Reminders for deadlines within three hours.
 }
 
 
@@ -50,10 +42,10 @@ def log(msg: str) -> None:
     print(f"[{dt.datetime.now(TZ):%Y-%m-%d %H:%M:%S}] {msg}", flush=True)
 
 
-# ---------------------------------------------------------------- 时间计算（纯函数，测试里直接调用）
+# ---------------------------------------------------------------- Time calculations (pure functions called directly by tests)
 
 def latest_slot(job: dict, now: dt.datetime) -> dt.datetime:
-    """now 之前（含 now）最近的一个计划时间点。"""
+    """Return the most recent scheduled slot at or before now."""
     for back in (0, 1):
         day = (now - dt.timedelta(days=back)).date()
         for h in sorted(job["hours"], reverse=True):
@@ -64,7 +56,7 @@ def latest_slot(job: dict, now: dt.datetime) -> dt.datetime:
 
 
 def next_slot(job: dict, now: dt.datetime) -> dt.datetime:
-    """now 之后最近的一个计划时间点。"""
+    """Return the nearest scheduled slot after now."""
     for ahead in (0, 1):
         day = (now + dt.timedelta(days=ahead)).date()
         for h in sorted(job["hours"]):
@@ -75,20 +67,20 @@ def next_slot(job: dict, now: dt.datetime) -> dt.datetime:
 
 
 def due(job: dict, now: dt.datetime, last: dt.datetime | None) -> dt.datetime | None:
-    """现在该不该运行。该 → 返回这次对应的计划时间点；不该 → None。
+    """Return the scheduled slot to run now, or None when no run is due.
 
-    last 是上次运行对应的时间点；None 表示从来没运行过（第一次启动只记下时间，不运行，
-    和 systemd 一样）。
+    last is the slot associated with the previous run. None means no prior run; the
+    first startup records the current slot without running, like systemd.
     """
     slot = latest_slot(job, now)
     if last is not None and slot <= last:
-        return None                                   # 这个时间点已经跑过了
+        return None                                   # This scheduled slot has already run.
     if job["catch_up"]:
         return slot if last is not None else None
     return slot if (now - slot).total_seconds() < ON_TIME else None
 
 
-# ---------------------------------------------------------------- 运行
+# ---------------------------------------------------------------- Execution
 
 def load_state() -> dict[str, dt.datetime]:
     try:
@@ -116,7 +108,7 @@ class Runner:
         self.lock = threading.Lock()
 
     def run_job(self, name: str) -> None:
-        """按顺序运行一个任务的所有脚本；前一个失败也继续下一个（和 systemd 的 "-" 一样）。"""
+        """Run all scripts for a job in order; continue after failures like systemd's leading “-”."""
         for cmd in JOBS[name]["cmds"]:
             if self.stopping.is_set():
                 return
@@ -143,8 +135,8 @@ class Runner:
         if not self.with_bot or self.stopping.is_set():
             return
         if self.bot and self.bot.poll() is None:
-            return                                    # 正在运行
-        if self.bot:                                  # 刚发现它退出了
+            return                                    # Already running.
+        if self.bot:                                  # The bot has just been found stopped.
             log(f"bot: 退出了（退出码 {self.bot.returncode}），{BOT_RESTART_DELAY} 秒后重启")
             self.bot, self.bot_down_since = None, time.monotonic()
         if self.bot_down_since and time.monotonic() - self.bot_down_since < BOT_RESTART_DELAY:
@@ -167,7 +159,7 @@ class Runner:
     def loop(self) -> None:
         state = load_state()
         now = dt.datetime.now(TZ)
-        for name, job in JOBS.items():               # 第一次启动：只记下时间点，不运行
+        for name, job in JOBS.items():               # First startup: record slots without running jobs.
             if name not in state:
                 state[name] = latest_slot(job, now)
         save_state(state)

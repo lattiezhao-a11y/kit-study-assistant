@@ -1,6 +1,6 @@
-# 树莓派上的"任务说明"：运行一次邮件摘要脚本。
-# 安装位置：/etc/systemd/system/mail-digest.service
-# 部署时把 User 和路径改成实际的用户名。
+# Raspberry Pi “task definition”: run the mail-digest script once.
+# Installation path: /etc/systemd/system/mail-digest.service
+# Replace User and paths with the actual deployment user during setup.
 [Unit]
 Description=Mail digest + ILIAS deadline sync (push to Telegram)
 Wants=network-online.target
@@ -10,6 +10,6 @@ After=network-online.target
 Type=oneshot
 User=pi
 WorkingDirectory=/home/pi/mail_digest
-# 先处理邮件，再查 ILIAS。前面的 - 表示：一个失败了，另一个照样运行
+# Process email first, then ILIAS. The leading - means one can fail without preventing the other from running.
 ExecStart=-/usr/bin/python3 /home/pi/mail_digest/digest.py
 ExecStart=-/usr/bin/python3 /home/pi/mail_digest/ilias_sync.py

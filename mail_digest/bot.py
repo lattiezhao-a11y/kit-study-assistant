@@ -1,18 +1,15 @@
 #!/usr/bin/env python3
-"""
-Telegram 对话机器人（一直在线，只回复你自己）
+"""Always-on Telegram conversational bot that replies only to its owner.
 
-工作方式（一个很小的 Agent）：
-  1. 等你在 Telegram 里发消息（长轮询 getUpdates，不开放任何端口）
-  2. 把【说明 + 最近几句对话 + 你的话 + 工具清单】发给 DeepSeek
-  3. AI 要调用工具 → 程序执行工具，把结果交回给 AI，最多 MAX_TOOL_ROUNDS 轮
-  4. AI 给出最终回答 → 发回 Telegram
-对话记忆闲置 IDLE_MINUTES 分钟后清空；/new 马上清空。
+It long-polls Telegram, sends instructions, recent context, the user message, and
+the tool list to DeepSeek, executes up to MAX_TOOL_ROUNDS requested tool calls,
+and sends the final response back to Telegram. Conversation memory expires after
+IDLE_MINUTES or immediately on /new.
 
-工具都在 tools.py 里。每个工具也可以在命令行单独测试：
-  python3 bot.py --tool 工具名 '{"参数": "值"}'
-改设置：AI 只能提议，程序把改动发给你，你回复「确认」才由程序修改（AI 自己确认不了）。
-语言：/start 或 /language 点按钮选中文 / Deutsch，或者直接说"我要用德语版"，马上生效（见 i18n.py）。
+Tools live in tools.py and can be tested individually with:
+  python3 bot.py --tool TOOL_NAME '{"argument": "value"}'
+The AI may only propose settings changes; the program applies them after the user
+confirms. /start and /language select the UI language; see i18n.py.
 """
 from __future__ import annotations
 
@@ -40,28 +37,28 @@ from i18n import tr
 from tools import TOOLS
 
 HERE = Path(__file__).resolve().parent
-STATE_FILE = DATA / "bot_state.json"     # Telegram 读到哪条了 + 每天的 token 用量
+STATE_FILE = DATA / "bot_state.json"     # Telegram update offset and daily token usage.
 TZ = ZoneInfo("Europe/Berlin")
-IDLE_MINUTES = 60          # 闲置多久清空对话记忆
-MAX_HISTORY = 16           # 最多记住最近几条（你说的 + 它回的）
-MAX_TOOL_ROUNDS = 6        # 一句话最多调用几轮工具
-TOOL_RESULT_CHARS = 8000   # 工具结果最多交给 AI 多少字
-KEEP_TOOL_CHARS = 2500     # 工具结果在对话记忆里保留多少字（方便追问"第二封写了啥"）
+IDLE_MINUTES = 60          # Clear conversation memory after this many idle minutes.
+MAX_HISTORY = 16           # Maximum number of recent user and assistant messages retained.
+MAX_TOOL_ROUNDS = 6        # Maximum tool-call rounds for one user message.
+TOOL_RESULT_CHARS = 8000   # Maximum number of tool-result characters passed to the AI.
+KEEP_TOOL_CHARS = 2500     # Tool-result characters retained in conversation memory for follow-up questions.
 CONFIRM_WORDS = {"确认", "/yes", "yes", "y", "是", "对", "好", "ok", "确定",
                  "ja", "jawohl", "bestätigen", "bestätigt", "bestätige", "okay", "passt"}
-PENDING_MINUTES = 10       # 设置改动等你确认的时间
-MAX_BACKOFF = 30           # 断网时最多隔多久重试一次（网络恢复后最多 30 秒就能收到消息）
+PENDING_MINUTES = 10       # Time allowed for confirming a settings change.
+MAX_BACKOFF = 30           # Maximum retry delay during network failures.
 TG_HOST = "api.telegram.org"
-CONNECT_TIMEOUT = 3        # 「敲门」最多等几秒，没反应就换个新连接重试
+CONNECT_TIMEOUT = 3        # Maximum time to wait for a new connection before retrying.
 CONNECT_TRIES = 3
-POLL_SECONDS = 10          # 每次等消息最多等几秒（连接悄悄断了的话，最多 POLL_SECONDS+5 秒就能发现）
-TYPING_EVERY = 4           # 「正在输入…」Telegram 只显示 5 秒，所以每 4 秒重发一次
-# deepseek-flash 价格（美元 / 百万 token），只用来估算花费；以 DeepSeek 官网为准
+POLL_SECONDS = 10          # Long-poll duration; broken connections are detected within POLL_SECONDS + 5 seconds.
+TYPING_EVERY = 4           # Refresh Telegram's typing indicator before its five-second expiry.
+# deepseek-flash prices in USD per million tokens; used only to estimate cost.
 PRICE_IN, PRICE_OUT = 0.30, 1.20
-COMMANDS = ("start", "language", "new", "usage", "help")    # Telegram「/」菜单里显示的命令
+COMMANDS = ("start", "language", "new", "usage", "help")    # Commands shown in Telegram's slash-command menu.
 
 
-# ---------------------------------------------------------------- 状态与花费
+# ---------------------------------------------------------------- State and usage
 
 def now() -> dt.datetime:
     return dt.datetime.now(TZ)
@@ -106,14 +103,17 @@ def usage_text(state: dict) -> str:
 # ---------------------------------------------------------------- Telegram
 
 class Telegram:
-    """跟 Telegram 的连接一直保持着（每个线程一条），不用每次都重新"敲门"（TCP + 加密握手）。
-    Wi-Fi 偶尔丢包时，"敲门"最容易卡住（系统按 1/2/4/8 秒重试，能卡 15 秒），所以：
-    敲门最多等 CONNECT_TIMEOUT 秒，没反应就马上换个新连接再敲（这时还没发内容，不会重复发消息）。"""
+    """Keep one Telegram connection per thread to avoid repeated TCP/TLS handshakes.
+
+    Wi-Fi packet loss can make connection establishment stall, so each attempt is
+    limited to CONNECT_TIMEOUT seconds. No request body has been sent at that point,
+    therefore reconnecting cannot duplicate a message.
+    """
 
     def __init__(self, token: str):
         self.path = f"/bot{token}/"
         self.ctx = ssl.create_default_context()
-        self.local = threading.local()        # 主循环一条连接，「正在输入…」线程一条
+        self.local = threading.local()        # One connection for each thread, including the typing-indicator thread.
 
     def _connect(self) -> http.client.HTTPSConnection:
         err: Exception | None = None
@@ -148,19 +148,19 @@ class Telegram:
                 break
             except (ConnectionError, http.client.HTTPException) as e:
                 self._drop()
-                # 一直保持的连接被对方关掉了（闲置太久）：内容没送到，换新连接再发一次
+                # The peer closed an idle persistent connection; retry the unsent request on a new one.
                 if reused and attempt == 1 and not isinstance(e, http.client.IncompleteRead):
                     continue
                 raise
             except Exception:
-                self._drop()                  # 超时等：这条连接不要了，下次重新建
+                self._drop()                  # Discard timed-out connections and recreate them when needed.
                 raise
         if not data.get("ok"):
             raise RuntimeError(f"Telegram {method} 失败：{data.get('description')}")
         return data["result"]
 
     def keep_typing(self, chat_id: str, stop: threading.Event) -> None:
-        """回答期间一直显示「正在输入…」。每次最多等 5 秒，失败就算了，不耽误回答。"""
+        """Show the typing indicator while answering; failures must not delay the reply."""
         while not stop.is_set():
             try:
                 self.call("sendChatAction", http_timeout=5, chat_id=chat_id, action="typing")
@@ -169,11 +169,11 @@ class Telegram:
             stop.wait(TYPING_EVERY)
 
     def send(self, chat_id: str, text: str) -> None:
-        """AI 写的 Markdown 转成 Telegram 认识的格式再发；Telegram 不认就退回纯文本。"""
-        for chunk in split_text(text.strip() or tr("bot.empty"), 3000):   # 单条上限 4096
+        """Convert AI Markdown to Telegram-supported HTML, with plain-text fallback."""
+        for chunk in split_text(text.strip() or tr("bot.empty"), 3000):   # Telegram's single-message limit is 4096 characters.
             try:
                 formatted = md_to_html(chunk)
-                if len(formatted) > 4096:                      # 加了格式以后变太长
+                if len(formatted) > 4096:                      # Formatting made the message too long.
                     raise ValueError("加格式后超过 4096 字")
                 self.call("sendMessage", http_timeout=15, chat_id=chat_id, text=formatted,
                           parse_mode="HTML", disable_web_page_preview=True)
@@ -184,10 +184,10 @@ class Telegram:
 
 
 def split_text(text: str, limit: int) -> list[str]:
-    """太长的消息按行切开（不在格式中间切断）。"""
+    """Split long messages at line boundaries without splitting formatting constructs."""
     chunks, cur = [], ""
     for line in text.split("\n"):
-        while len(line) > limit:                                 # 单行超长：硬切
+        while len(line) > limit:                                 # Hard-split an overlong individual line.
             if cur:
                 chunks.append(cur)
                 cur = ""
@@ -202,10 +202,10 @@ def split_text(text: str, limit: int) -> list[str]:
 
 
 def md_to_html(text: str) -> str:
-    """Markdown → Telegram HTML：粗体、斜体、删除线、代码、链接、标题、列表、引用、表格。"""
+    """Convert Markdown to Telegram HTML: emphasis, code, links, headings, lists, quotes, and tables."""
     keep: list[str] = []
 
-    def stash(s: str) -> str:                                    # 代码里的内容不再转换
+    def stash(s: str) -> str:                                    # Do not process content already converted to code or HTML.
         keep.append(s)
         return f"\x00{len(keep) - 1}\x00"
 
@@ -221,18 +221,18 @@ def md_to_html(text: str) -> str:
     lines = []
     for line in text.split("\n"):
         if re.fullmatch(r"\s*\|?\s*:?-{3,}:?\s*(\|\s*:?-{3,}:?\s*)*\|?\s*", line):
-            continue                                             # 表格分隔线 |---|---|
-        if re.fullmatch(r"\s*\|.*\|\s*", line):                   # 表格行：去掉两边的 |
+            continue                                             # Markdown table separator, e.g. |---|---|.
+        if re.fullmatch(r"\s*\|.*\|\s*", line):                   # Table row: remove outer pipes.
             line = " | ".join(c.strip() for c in line.strip().strip("|").split("|"))
         if re.fullmatch(r"\s*([-*_])(\s*\1){2,}\s*", line):
-            line = "———"                                         # 分隔线
-        line = re.sub(r"^#{1,6}\s+(.+?)\s*#*$", r"**\1**", line)  # 标题 → 粗体
-        line = re.sub(r"^(\s*)[-*+]\s+", r"\1• ", line)          # 列表
-        line = re.sub(r"^(\s*)(\d{1,2})[.)]\s+",                 # 1. 2. → ① ②（1~20）
+            line = "———"                                         # Horizontal separator.
+        line = re.sub(r"^#{1,6}\s+(.+?)\s*#*$", r"**\1**", line)  # Heading to bold text.
+        line = re.sub(r"^(\s*)[-*+]\s+", r"\1• ", line)          # Unordered list.
+        line = re.sub(r"^(\s*)(\d{1,2})[.)]\s+",                 # 1. 2. to ① ② for 1–20.
                       lambda m: m.group(1) + (chr(0x245F + int(m.group(2))) + " "
                                               if 1 <= int(m.group(2)) <= 20 else m.group(0)[len(m.group(1)):]),
                       line)
-        line = re.sub(r"^&gt;\s?", "▎ ", line)                   # 引用
+        line = re.sub(r"^&gt;\s?", "▎ ", line)                   # Block quote.
         lines.append(line)
     text = "\n".join(lines)
     text = re.sub(r"\*\*(.+?)\*\*", r"<b>\1</b>", text)
@@ -242,9 +242,9 @@ def md_to_html(text: str) -> str:
     return re.sub(r"\x00(\d+)\x00", lambda m: keep[int(m.group(1))], text)
 
 
-# ---------------------------------------------------------------- AI（带工具的循环）
+# ---------------------------------------------------------------- AI tool-call loop
 
-# 还没上线的功能：每做好一个，就从这里删掉（AI 被要求做这些事时必须直说做不到）
+# Features not yet available. Remove an entry when implemented; the AI must state that it cannot perform these requests.
 NOT_YET: list[str] = []
 
 SYSTEM = """你是我的私人学习助理，在 Telegram 里{reply_rule}，简短直接。
@@ -303,7 +303,7 @@ def answer(text: str, history: list[dict], cfg: dict, state: dict,
     messages = [{"role": "system", "content": system}, *history, {"role": "user", "content": text}]
     used = [] if trace is None else trace
     results = []
-    timing = []                      # 每一步花了几秒（写进日志，方便查哪里慢）
+    timing = []                      # Duration of each step, logged to identify slow operations.
     for _ in range(MAX_TOOL_ROUNDS + 1):
         t1 = time.time()
         resp = call_llm(cfg["llm"], messages)
@@ -325,7 +325,7 @@ def answer(text: str, history: list[dict], cfg: dict, state: dict,
             messages.append({"role": "tool", "tool_call_id": c["id"], "content": result})
     else:
         reply = tr("bot.too_many_tools")
-    # 记住你说的话、最终回答，和工具结果的前一部分（追问"第二封写了啥"时要用到编号）
+    # Store the user message, final answer, and initial tool output for numbered follow-up questions.
     memo = reply
     if results:
         memo += "\n\n（本轮工具结果，供之后参考）\n" + "\n".join(results)[:KEEP_TOOL_CHARS]
@@ -340,19 +340,19 @@ def help_text() -> str:
     return tr("bot.help")
 
 
-# ---------------------------------------------------------------- 语言：按钮 + 「/」菜单
+# ---------------------------------------------------------------- Language: buttons and slash-command menu
 
 LANG_BUTTONS = {"inline_keyboard": [[{"text": name, "callback_data": f"lang:{code}"}
                                      for code, name in i18n.LANGS.items()]]}
 
 
 def ask_language(tg: Telegram, chat_id: str) -> None:
-    """发一条带【中文】【Deutsch】两个按钮的消息（/start、/language）。"""
+    """Send a message with Chinese and German buttons for /start and /language."""
     tg.call("sendMessage", http_timeout=15, chat_id=chat_id, text=i18n.PICK, reply_markup=LANG_BUTTONS)
 
 
 def set_commands(tg: Telegram) -> None:
-    """Telegram 输入框旁「/」菜单里的命令说明，跟着语言换。失败了不影响聊天。"""
+    """Update Telegram's slash-command descriptions for the selected language; failure is non-fatal."""
     try:
         tg.call("setMyCommands", http_timeout=10,
                 commands=[{"command": c, "description": tr(f"cmd.{c}")} for c in COMMANDS])
@@ -361,9 +361,9 @@ def set_commands(tg: Telegram) -> None:
 
 
 def on_button(tg: Telegram, owner: str, cq: dict, history: list[dict]) -> None:
-    """你点了按钮（目前只有选语言的按钮）。"""
+    """Handle a button press; currently only language-selection buttons exist."""
     try:
-        tg.call("answerCallbackQuery", http_timeout=10, callback_query_id=cq["id"])   # 按钮停止转圈
+        tg.call("answerCallbackQuery", http_timeout=10, callback_query_id=cq["id"])   # Stop the button's loading spinner.
     except Exception:
         pass
     data = str(cq.get("data") or "")
@@ -371,8 +371,8 @@ def on_button(tg: Telegram, owner: str, cq: dict, history: list[dict]) -> None:
     if not data.startswith("lang:") or code not in i18n.LANGS:
         return
     tools.set_language(code)
-    history.clear()                       # 之前的对话是另一种语言，清掉免得 AI 跟着用旧语言
-    try:                                  # 按钮那条消息改成「✅ 语言：…」，按钮消失
+    history.clear()                       # Clear prior-language context so the AI does not continue using it.
+    try:                                  # Replace the button message with the selected language and remove the buttons.
         tg.call("editMessageText", http_timeout=10, chat_id=owner,
                 message_id=cq["message"]["message_id"], text=tr("lang.done"))
     except Exception:
@@ -381,7 +381,7 @@ def on_button(tg: Telegram, owner: str, cq: dict, history: list[dict]) -> None:
     set_commands(tg)
 
 
-# ---------------------------------------------------------------- 主循环
+# ---------------------------------------------------------------- Main loop
 
 def main() -> int:
     ap = argparse.ArgumentParser()
@@ -395,7 +395,7 @@ def main() -> int:
     i18n.use(cfg)
     tools.CFG.update(cfg)
     tools.CONFIG_PATH = Path(args.config)
-    cfg = tools.CFG                                   # 改完设置后这里会自动是新的
+    cfg = tools.CFG                                   # Settings changes refresh this shared configuration object.
 
     if args.tool:
         print(run_tool(args.tool[0], args.tool[1]))
@@ -404,25 +404,25 @@ def main() -> int:
     tg = Telegram(secret(cfg["telegram"]["bot_token_env"]))
     owner = str(secret(cfg["telegram"]["chat_id_env"]))
     state = load_state()
-    if state["offset"] is None:                     # 第一次启动：跳过以前积压的旧消息
+    if state["offset"] is None:                     # First startup: skip previously queued messages.
         old = tg.call("getUpdates", offset=-1, timeout=0)
         state["offset"] = old[-1]["update_id"] + 1 if old else 0
         save_state(state)
     history: list[dict] = []
     last_active = now()
     backoff = 5
-    stalled = False                                  # 上一次是不是连接卡住了
+    stalled = False                                  # Whether the previous connection attempt stalled.
     set_commands(tg)
     print(f"机器人已启动，语言 {i18n.LANG}，工具 {len(TOOLS)} 个：{', '.join(TOOLS) or '无'}", flush=True)
 
     while True:
         try:
-            # 每次最多等 POLL_SECONDS 秒有没有新消息，有消息 Telegram 会马上交过来
+            # Wait at most POLL_SECONDS for updates; Telegram returns immediately when one arrives.
             updates = tg.call("getUpdates", http_timeout=POLL_SECONDS + 5, timeout=POLL_SECONDS,
                               offset=state["offset"], allowed_updates=["message", "callback_query"])
             backoff, stalled = 5, False
         except TimeoutError as e:
-            if not stalled:                          # 连接悄悄卡住了：马上换新连接，不用等
+            if not stalled:                          # Silent connection stall: reconnect immediately.
                 stalled = True
                 print(f"getUpdates 卡住了（{e}），马上重连", flush=True)
                 continue
@@ -430,7 +430,7 @@ def main() -> int:
             time.sleep(backoff)
             backoff = min(backoff * 2, MAX_BACKOFF)
             continue
-        except Exception as e:                       # 断网等：等一会儿再试
+        except Exception as e:                       # Network and other transient errors: retry after a delay.
             print(f"getUpdates 出错：{e}，{backoff} 秒后重试", flush=True)
             time.sleep(backoff)
             backoff = min(backoff * 2, MAX_BACKOFF)
@@ -440,7 +440,7 @@ def main() -> int:
             state["offset"] = upd["update_id"] + 1
             save_state(state)
             cq = upd.get("callback_query")
-            if cq:                                   # 点了按钮
+            if cq:                                   # Button press.
                 chat = (cq.get("message") or {}).get("chat", {})
                 if str(chat.get("id")) == owner and chat.get("type") == "private":
                     try:
@@ -452,7 +452,7 @@ def main() -> int:
             msg = upd.get("message") or {}
             chat = msg.get("chat", {})
             if str(chat.get("id")) != owner or chat.get("type") != "private":
-                continue                             # 不是你：不理、不回
+                continue                             # Ignore messages not sent by the owner.
             text = (msg.get("text") or "").strip()
             sent = dt.datetime.fromtimestamp(msg.get("date", time.time()), TZ)
             print(f"{now():%H:%M:%S} 收到消息（你在 {sent:%H:%M:%S} 发的，"
@@ -462,11 +462,11 @@ def main() -> int:
                 continue
 
             if now() - last_active > dt.timedelta(minutes=IDLE_MINUTES):
-                history.clear()                       # 闲置太久：清空对话记忆
+                history.clear()                       # Clear conversation memory after a long idle period.
             last_active = now()
 
             cmd = text.split()[0].split("@")[0].lower()
-            if cmd in ("/start", "/language"):         # 先选语言，选好了再发使用说明
+            if cmd in ("/start", "/language"):         # Select a language before showing usage instructions.
                 ask_language(tg, owner)
                 continue
             if cmd == "/help":
@@ -480,7 +480,7 @@ def main() -> int:
                 tg.send(owner, usage_text(state))
                 continue
 
-            # 等确认的设置改动：只有你回复「确认」才改；说别的就取消
+            # Await a settings confirmation. Only the confirmation word applies it; any other reply cancels it.
             pending = tools.PENDING.get("settings")
             if pending:
                 if time.time() - pending["at"] > PENDING_MINUTES * 60:
@@ -509,11 +509,11 @@ def main() -> int:
                 traceback.print_exc()
                 reply = tr("bot.error", err=f"{type(e).__name__}: {e}")
             save_state(state)
-            if i18n.LANG != lang_before:              # 这句话里换了语言（language_set）
-                history.clear()                       # 旧语言的对话清掉，「/」菜单也换过来
+            if i18n.LANG != lang_before:              # The message changed language through language_set.
+                history.clear()                       # Clear old-language context and update the slash-command menu.
                 set_commands(tg)
             pending = tools.PENDING.get("settings")
-            if pending and pending.pop("fresh", False):   # 改动内容由程序原样发出，不靠 AI 转述
+            if pending and pending.pop("fresh", False):   # Send the exact program-generated change instead of an AI paraphrase.
                 reply += f"\n\n———\n{pending['preview']}\n\n" + tr("bot.confirm_hint", minutes=PENDING_MINUTES)
             stop_typing.set()
             try:

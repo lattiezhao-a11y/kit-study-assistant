@@ -42,13 +42,13 @@ tools.TODO_FILE = TMP / "todos.json"
 tools.TIMETABLE_FILE = TMP / "timetable.json"
 tools.CONFIG_PATH = TMP / "config.toml"
 tools.BACKUP_DIR = TMP / "backup"
-# 副本统一从中文开始（用户在 Telegram 里选了德语也一样），切换语言的测试才有意义
+# Copies begin in Chinese so language-switch tests remain meaningful.
 _cfg_text = tools.CONFIG_PATH.read_text(encoding="utf-8")
 tools.CONFIG_PATH.write_text(re.sub(r'(?m)^language\s*=\s*"[^"]*"', 'language = "zh"', _cfg_text), encoding="utf-8")
 CFG = tomllib.loads(tools.CONFIG_PATH.read_text(encoding="utf-8"))
 tools.CFG.update(CFG)
 ORIG_CONFIG = tools.CONFIG_PATH.read_text(encoding="utf-8")
-i18n.LANG = "zh"                 # 下面的检查按中文写；德语在 part_lang 里单独测
+i18n.LANG = "zh"                 # The following assertions use Chinese; German is tested separately in part_lang.
 
 results: list[tuple[str, bool, str]] = []
 
@@ -66,7 +66,7 @@ def show(text: str, n: int = 600) -> None:
     print("   " + text[:n].replace("\n", "\n   ") + ("…" if len(text) > n else ""))
 
 
-# ================================================================ 格式：Markdown → Telegram HTML
+# ================================================================ Formatting: Markdown → Telegram HTML
 from html.parser import HTMLParser  # noqa: E402
 
 ALLOWED = {"b", "i", "s", "code", "pre", "a"}
@@ -119,7 +119,7 @@ def part_format() -> None:
                                  for x in parts))
 
 
-# ================================================================ Telegram 连接（只调用 getMe，不发消息）
+# ================================================================ Telegram connection (getMe only; no messages)
 
 def part_net() -> None:
     print("\n========== Telegram 连接（0 token，不发消息）==========")
@@ -136,14 +136,14 @@ def part_net() -> None:
     check("连接一直保持，不用每次重新建", tg.local.conn.sock is first,
           " ".join(f"{x:.2f}s" for x in took))
     print("   5 次 getMe：" + " ".join(f"{x:.2f}s" for x in took))
-    tg.local.conn.sock.shutdown(socket.SHUT_RDWR)          # 模拟连接被对方关掉
+    tg.local.conn.sock.shutdown(socket.SHUT_RDWR)          # Simulate a peer closing the connection.
     try:
         ok = tg.call("getMe", http_timeout=10).get("is_bot")
     except Exception as e:
         ok = repr(e)
     check("连接被关掉后自动换新连接，照样成功", ok is True, str(ok))
     old_host, old_tries = bot.TG_HOST, bot.CONNECT_TRIES
-    bot.TG_HOST, bot.CONNECT_TRIES = "10.255.255.1", 2      # 一个连不上的地址
+    bot.TG_HOST, bot.CONNECT_TRIES = "10.255.255.1", 2      # An unreachable address.
     t = _t.time()
     try:
         tg._drop()
@@ -158,7 +158,7 @@ def part_net() -> None:
     tg._drop()
 
 
-# ================================================================ 数据文件夹 + 调度器（Docker 用，0 token）
+# ================================================================ Data directory and scheduler (Docker; zero tokens)
 
 def part_scheduler() -> None:
     print("\n========== 数据文件夹 + 调度器（0 token）==========")
@@ -167,7 +167,7 @@ def part_scheduler() -> None:
     import subprocess
     import scheduler
     import tempfile as _tf
-    # DATA_DIR：不设置时就是代码文件夹（树莓派），设置了就用它（Docker）
+    # DATA_DIR defaults to the source directory; Docker sets it explicitly.
     check("DATA_DIR 不设置 → 数据就在代码文件夹",
           "DATA_DIR" in os.environ or digest.DATA == HERE.resolve(), str(digest.DATA))
     with _tf.TemporaryDirectory() as d:
@@ -211,7 +211,62 @@ def part_scheduler() -> None:
           and J["morning"]["hours"] == [7] and J["morning"]["minute"] == 0)
 
 
-# ================================================================ A：直接调用工具
+# ================================================================ Offline regression checks
+
+def part_regressions() -> None:
+    import os
+    import ssl
+    from unittest.mock import patch
+    import mail_imap
+    import setup
+
+    account = {"name": "test", "host": "imap.example.invalid", "user": "fixture",
+               "password_env": "TEST_IMAP_PASSWORD"}
+    with patch.object(mail_imap.imaplib, "IMAP4_SSL") as connect, \
+            patch.dict(os.environ, {"TEST_IMAP_PASSWORD": "fixture"}):
+        conn = connect.return_value
+        conn.select.return_value = ("OK", [])
+        conn.response.return_value = ("UIDVALIDITY", [b"1"])
+        conn.uid.return_value = ("OK", [b""])
+        digest.fetch_account(account, {}, 1, 10, 100)
+        tools._close(tools._imap(account))
+        setup.check_imap(account["host"], account["user"], "fixture")
+        contexts = [c.kwargs["ssl_context"] for c in connect.call_args_list]
+        check("三个 IMAP 入口都验证证书和主机名", len(contexts) == 3 and all(
+            ctx.verify_mode == ssl.CERT_REQUIRED and ctx.check_hostname for ctx in contexts))
+
+    course, old_day, new_day = "Fixture course", "2099-01-02", "2099-01-03"
+    with patch.object(ilias_sync, "DEADLINES_FILE", TMP / "regression_deadlines.json"):
+        call("ddl_add", course=course, title="Task A", date=old_day)
+        other = call("ddl_add", course=course, title="Task B", date=old_day)
+        repeat = call("ddl_add", course=course, title="task  a", date=old_day, time="09:00")
+        with ilias_sync.locked_store(save=False) as store:
+            first = next(d for d in store if d["title"] == "Task A")
+            check("同一天的不同作业分别保存，同名作业补上时间", len(store) == 2
+                  and other.startswith("已添加") and "没有重复添加" in repeat
+                  and first["due"][11:16] == "09:00")
+        call("ddl_edit", id=first["id"], title="Renamed A", date=new_day, time="none")
+        duplicate = call("ddl_add", course=course, title="Task A", date=old_day, time="09:00")
+        with ilias_sync.locked_store(save=False) as store:
+            first = next(d for d in store if d["title"] == "Renamed A")
+            check("旧标题和旧日期仍能去重，原截止时间不会覆盖手动改期", len(store) == 2
+                  and "没有重复添加" in duplicate and first["due"].startswith(new_day)
+                  and not first["time_known"])
+
+        call("ddl_add", course=course, title="Task C", date=old_day)
+        mail = digest.Mail("KIT", "Fixture", "Task B", "", False, True, cat="must",
+                           course=course, deadline=new_day, replaces=old_day)
+        digest.add_mail_deadlines([mail], save=True)
+        with ilias_sync.locked_store(save=False) as store:
+            check("邮件改期只划掉匹配的旧作业", mail.reminder == "added" and len(store) == 4
+                  and [d["title"] for d in store if d.get("done")] == ["Task B"])
+        digest.add_mail_deadlines([mail], save=True)
+        with ilias_sync.locked_store(save=False) as store:
+            check("重复处理改期邮件不影响其他作业", mail.reminder == "dup" and len(store) == 4
+                  and [d["title"] for d in store if d.get("done")] == ["Task B"])
+
+
+# ================================================================ A: direct tool calls
 def part_a() -> None:
     print("\n========== A：直接调用工具（0 token）==========")
     # O1
@@ -242,7 +297,7 @@ def part_a() -> None:
     m = re.search(r"#(\d+)", out)
     check("ddl_add 新增", out.startswith("已添加") and m, out)
     tid = int(m.group(1)) if m else 0
-    check("ddl_add 重复不加", "没有重复添加" in call("ddl_add", course="Robotics I", title="x",
+    check("ddl_add 重复不加", "没有重复添加" in call("ddl_add", course="Robotics I", title="测试作业",
                                                    date="2026-12-01"))
     out = call("ddl_edit", id=tid, date="2026-12-03")
     check("ddl_edit 推迟", "12/3" in out, out)
@@ -313,7 +368,7 @@ def part_a() -> None:
     check("config.toml 只改了这 5 项", new == exp)
     check("注释都还在", tools.CONFIG_PATH.read_text(encoding="utf-8").count("#") >= n_comments)
     check("每次改动前都有备份", len(list(tools.BACKUP_DIR.glob("config.toml.*"))) >= 1)
-    # 再改回去
+    # Change it back.
     for st in [dict(key="always_ignore", action="remove", value=str(len(exp["llm"]["always_ignore"]))),
                dict(key="always_important_senders", action="remove", value="tutor@kit.edu"),
                dict(key="quiet_hours", action="set", value="0,7"),
@@ -330,7 +385,7 @@ def part_a() -> None:
     tools.CONFIG_PATH.write_text(ORIG_CONFIG, encoding="utf-8")
     tools.CFG.clear(), tools.CFG.update(CFG)
 
-    # about_me：一行一行加 / 删（「不感兴趣：…」就是从这里学进去的）
+    # Add and remove about_me one line at a time; the “not interested” preference is learned here.
     old_me = CFG["llm"].get("about_me", "")
     out = call("settings_change", key="about_me", action="add", value="不感兴趣：测试用的一类东西")
     pv = tools.PENDING.get("settings", {}).get("preview", "")
@@ -351,7 +406,7 @@ def part_a() -> None:
     tools.CONFIG_PATH.write_text(ORIG_CONFIG, encoding="utf-8")
     tools.CFG.clear(), tools.CFG.update(CFG)
 
-    # 删掉从邮件来的提醒 → 提示 AI 提议「不感兴趣」；手动加的不提示
+    # Removing a mail-derived reminder suggests “not interested”; manual items do not.
     with ilias_sync.locked_store() as store:
         tools._ensure_ids(store)
         store.append({"course": "📧 测试项目", "title": "测试：跨校短期课程申请",
@@ -364,7 +419,7 @@ def part_a() -> None:
     out = call("ddl_delete", id=int(re.search(r"#(\d+)", out).group(1)))
     check("删除手动加的不提示", "已删除" in out and "about_me" not in out, out)
 
-    # 邮件分类：义务加提醒，机会不加，about_me 里的「不感兴趣」进提示词
+    # Email classification: duties add reminders, opportunities do not, and about_me enters the prompt.
     prompt, _ = digest.build_prompt({"about_me": "我是学生\n不感兴趣：短期交流项目"}, {})
     check("分类提示词里有 about_me 的每一行、不感兴趣规则和 kind",
           "不感兴趣：短期交流项目" in prompt and "一律归为 ignore" in prompt
@@ -396,11 +451,11 @@ def part_a() -> None:
         check("mail_read（最近 2 天没有邮件，跳过）", True)
     check("mail_read 格式错误给提示", "格式" in call("mail_read", id="abc"))
 
-    # O6：先在副本里生成论坛列表（真实的会在下次 ILIAS 检查时自动生成）
+    # O6: create the forum list in the copy; real data is generated by the next ILIAS check.
     state = tools.load_json(ilias_sync.STATE_FILE, {})
     if not state.get("forums"):
         il = tools._ilias()
-        il.pages = -400                    # 测试时多给一些页面额度
+        il.pages = -400                    # Allow additional page requests during testing.
         fs: dict = {}
         skip = re.compile(CFG["ilias"]["skip_folders"], re.I) if CFG["ilias"].get("skip_folders") else None
         for c in CFG["ilias"]["courses"]:
@@ -418,8 +473,8 @@ def part_a() -> None:
         check("forum_read", out.startswith("（以下是论坛原文"), out)
 
 
-# ================================================================ 语言：中文 / 德语（0 token）
-CJK = re.compile(r"[\u4e00-\u9fff\u3000-\u303f\uff01-\uff5e]")    # 汉字和中文标点
+# ================================================================ Languages: Chinese / German (zero tokens)
+CJK = re.compile(r"[\u4e00-\u9fff\u3000-\u303f\uff01-\uff5e]")    # Chinese characters and punctuation.
 
 
 def no_chinese(s: str) -> bool:
@@ -465,7 +520,7 @@ def part_lang() -> None:
           and i18n.date_text("2026-12-01") == "01.12.2026" and i18n.date_text("2026-12-01", True) == "1.12."
           and i18n.date_text("bald") == "bald",
           i18n.due_label(_dt.datetime(2026, 11, 30, 13, 15), True))
-    # 推送：邮件摘要、早上汇总、3 小时提醒、ILIAS、论坛
+    # Deliveries: email digest, morning summary, three-hour reminders, ILIAS, and forums.
     mails = [digest.Mail("KIT", "Prof <p@kit.edu>", "Klausuranmeldung", "", False, True, cat="must",
                          summary="Anmeldung bis Freitag", deadline="2099-02-01", time="12:00", reminder="added"),
              digest.Mail("KIT", "Intl <i@kit.edu>", "Summer School", "", False, True, cat="maybe",
@@ -499,7 +554,7 @@ def part_lang() -> None:
     tools.PENDING.clear()
     i18n.LANG = "zh"
 
-    # 切换语言：写进 config.toml（只改这一项、注释都在、有备份），马上生效
+    # Language switch: update only config.toml's language entry, preserve comments, and make a backup.
     n_backup = len(list(tools.BACKUP_DIR.glob("config.toml.*"))) if tools.BACKUP_DIR.exists() else 0
     changed = tools.set_language("de")
     new = tomllib.loads(tools.CONFIG_PATH.read_text(encoding="utf-8"))
@@ -516,7 +571,7 @@ def part_lang() -> None:
           and tomllib.loads(tools.CONFIG_PATH.read_text(encoding="utf-8"))["general"]["language"] == "zh", out)
     check("不支持的语言被拒绝", "工具出错" in call("language_set", language="fr") and i18n.LANG == "zh")
 
-    # 按钮：/start、/language 发出的【中文】【Deutsch】（用假的 Telegram，不发消息）
+    # Buttons: fake Telegram sends Chinese and German choices without delivering messages.
     class FakeTG:
         def __init__(self):
             self.calls, self.sent = [], []
@@ -549,8 +604,8 @@ def part_lang() -> None:
     restore_config()
 
 
-# ================================================================ B：AI 选工具
-CASES = [  # (你说的话, 必须用到的工具, 是否接着上一句的对话, 回答里必须有的字)
+# ================================================================ B: AI tool selection
+CASES = [  # (user message, required tool, follows prior conversation, required reply text)
     ("还有哪些作业没交？", {"ddl_list"}, False, ""),
     ("BS 第三次作业交了", {"ddl_done"}, False, ""),
     ("撤销，刚才那个其实还没交", {"ddl_done"}, True, ""),
@@ -581,20 +636,20 @@ def part_b() -> None:
     print("\n========== B：AI 选工具（花 token）==========")
     state = {"usage": {}}
     history: list[dict] = []
-    calls: list[tuple[str, dict]] = []          # 记下每次调用工具的参数
+    calls: list[tuple[str, dict]] = []          # Record arguments for every tool call.
     real_run = bot.run_tool
 
     def traced(name, raw):
         calls.append((name, json.loads(raw or "{}")))
         return real_run(name, raw)
     bot.run_tool = traced
-    # 测试从固定状态开始：BS 第三次作业设为"没交"（真实数据里可能已经标记过）
+    # Begin from a fixed state: the third BS assignment is unsubmitted.
     with ilias_sync.locked_store() as store:
         for d in store:
             if d["course"] == "Betriebssysteme" and "03" in d["title"]:
                 for k in ("done", "done_at", "deleted"):
                     d.pop(k, None)
-        tools._ensure_ids(store)                # 一个从邮件自动加进来的「机会」，用来测删除时学习
+        tools._ensure_ids(store)                # Mail-added opportunity used to test learning after deletion.
         store.append({"course": "📧 KIT International", "title": "Summer School 2027 申请截止",
                       "due": "2099-03-01T00:00+01:00", "time_known": False, "source": "mail"})
         tools._ensure_ids(store)
@@ -614,17 +669,17 @@ def part_b() -> None:
         ok = ok and (must in reply)
         ok = ok and valid_html(bot.md_to_html(reply))
         lists = [c for n, c in calls if n == "ddl_list"]
-        if text in ("还有哪些作业没交？", "哪些作业没交"):            # 普通问法：不列全部、不限这周
+        if text in ("还有哪些作业没交？", "哪些作业没交"):            # Normal query: not all assignments and not limited to this week.
             ok = ok and lists and not any(c.get("all") or c.get("this_week") for c in lists)
         if text == "这周有哪些作业要交？":
             ok = ok and any(c.get("this_week") for c in lists) and not any(c.get("all") for c in lists)
         if text == "把全部作业和考试都列出来":
             ok = ok and any(c.get("all") for c in lists)
-        ok = ok and not re.search(r"#\d|KIT:\d|Gmail:\d|\d{6,}/\d{5,}", reply)   # 不显示编号
+        ok = ok and not re.search(r"#\d|KIT:\d|Gmail:\d|\d{6,}/\d{5,}", reply)   # Do not expose identifiers.
         if "settings_change" in need:
             ok = ok and bool(tools.PENDING.get("settings")) and \
                 tools.CONFIG_PATH.read_text(encoding="utf-8") == ORIG_CONFIG
-        if "不感兴趣" in text or "Summer School" in text:   # 学到的东西写进 about_me 的「不感兴趣」
+        if "不感兴趣" in text or "Summer School" in text:   # Write learned preferences to about_me as “not interested”.
             p = tools.PENDING.get("settings") or {}
             row = (tools._lines(p.get("new", "")) or [""])[-1]
             ok = ok and p.get("key") == "about_me" and row.startswith("不感兴趣")
@@ -640,9 +695,9 @@ def part_b() -> None:
     check("AI 没有自己改掉设置（真正修改要我回复「确认」）",
           tools.CONFIG_PATH.read_text(encoding="utf-8") == ORIG_CONFIG)
 
-    # 语言：聊天里切换（马上生效），切换后用德语聊天，再切回来
+    # Switch language in chat immediately, converse in German, then switch back.
     print("\n   —— 语言 ——")
-    lang_cases = [  # (你说的话, 之后应该是什么语言, 必须用到的工具)
+    lang_cases = [  # (user message, expected language afterwards, required tool)
         ("我要用德语版", "de", {"language_set"}),
         ("Welche Abgaben sind noch offen?", "de", {"ddl_list"}),
         ("Bitte wieder auf Chinesisch antworten", "zh", {"language_set"}),
@@ -677,6 +732,7 @@ if __name__ == "__main__":
     try:
         part_format()
         part_scheduler()
+        part_regressions()
         if "--format-only" not in sys.argv:
             part_net()
             part_a()

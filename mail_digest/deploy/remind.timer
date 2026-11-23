@@ -2,7 +2,7 @@
 Description=Check for urgent deadlines every hour during the day
 
 [Timer]
-# 07:05、08:05 …… 23:05，夜里不查
+# 07:05, 08:05, …, 23:05; do not check overnight.
 OnCalendar=*-*-* 07..23:05:00
 
 [Install]

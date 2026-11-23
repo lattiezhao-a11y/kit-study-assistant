@@ -1,22 +1,15 @@
 #!/usr/bin/env python3
-"""
-安装向导：一问一答，生成 config.toml 和 .env（密码只写进 .env，权限 600）
+"""Interactive setup wizard that generates config.toml and a mode-600 .env file.
 
-  python3 setup.py              第一次安装（已经有配置时，会问你：全部重来 / 只改课程 / 取消）
-  python3 setup.py --courses    新学期：只重新选课程，别的设置不动
-  python3 setup.py --no-check   不联网检查（测试用；课程和 chat ID 要手动输入）
-
-Docker 里：docker compose run --rm assistant python3 setup.py
-
-每填一项就马上检查（登录 KIT 邮箱和 ILIAS、检查 AI 的 key、找到你的 Telegram chat ID），
-错了当场改。所有问题都答完才写文件；中途按 Ctrl+C 什么都不会改。
+The default mode handles initial setup, --courses replaces only courses for a new
+semester, and --no-check skips network validation for testing. Values are validated
+as entered, but files are written only after every question is answered.
 """
 from __future__ import annotations
 
 import argparse
 import datetime as dt
 import getpass
-import imaplib
 import json
 import os
 import re
@@ -29,6 +22,7 @@ import urllib.request
 from pathlib import Path
 
 import i18n
+import mail_imap
 from digest import DATA
 
 HERE = Path(__file__).resolve().parent
@@ -37,14 +31,14 @@ ENV = DATA / ".env"
 BACKUP_DIR = DATA / "backup"
 EXAMPLE = HERE / "config.example.toml"
 
-# ---------------------------------------------------------------- 文字
-# 向导的文字都在 i18n.py 里（键以 "su." 开头），每句都有中文和德语。
+# ---------------------------------------------------------------- Text
+# Wizard text is stored in i18n.py under keys beginning with “su.”, with Chinese and German variants.
 
 def tr(key: str, /, **kw) -> str:
     return i18n.tr("su." + key, **kw)
 
 
-# ---------------------------------------------------------------- 输入
+# ---------------------------------------------------------------- Input
 
 def _clean(s: str) -> str:
     return "".join(ch for ch in s if ch >= " " and ch != "\x7f").strip()
@@ -65,7 +59,7 @@ def ask(prompt: str, default: str = "", required: bool = False) -> str:
 
 def ask_secret(prompt: str, required: bool = True) -> str:
     while True:
-        # 有终端时不显示输入；没有终端（测试时用管道喂答案）就普通地读
+        # Hide piped input in a terminal; read it normally when tests provide answers through a pipe.
         v = getpass.getpass(prompt + " ") if sys.stdin.isatty() else input(prompt + " ")
         v = _clean(v)
         if v or not required:
@@ -92,7 +86,7 @@ def menu(prompt: str, options: list[str]) -> int:
 
 
 def parse_numbers(text: str, n: int) -> list[int] | None:
-    """"1 3, 4" → [1, 3, 4]（从 1 数）；有不在 1..n 里的就返回 None。"""
+    """Parse one-based numbers such as “1 3, 4”; return None for values outside 1..n."""
     parts = [p for p in re.split(r"[\s,，、;]+", text.strip()) if p]
     if not all(p.isdigit() and 1 <= int(p) <= n for p in parts):
         return None
@@ -103,10 +97,10 @@ def title(key: str) -> None:
     print(f"\n━━━━ {tr(key)} ━━━━")
 
 
-# ---------------------------------------------------------------- 联网检查（--no-check 时都不调用）
+# ---------------------------------------------------------------- Network checks (never called with --no-check)
 
 def check_imap(host: str, user: str, password: str, port: int = 993) -> None:
-    conn = imaplib.IMAP4_SSL(host, port, timeout=30)
+    conn = mail_imap.connect(host, port, timeout=30)
     try:
         conn.login(user, password)
         typ, _ = conn.select("INBOX", readonly=True)
@@ -120,7 +114,7 @@ def check_imap(host: str, user: str, password: str, port: int = 993) -> None:
 
 
 def check_llm(base_url: str, key: str) -> None:
-    """GET /models：只检查 key 对不对，不花 token。"""
+    """Check an API key through GET /models without consuming tokens."""
     req = urllib.request.Request(base_url.rstrip("/") + "/models",
                                  headers={"Authorization": f"Bearer {key}"})
     try:
@@ -146,7 +140,7 @@ def tg_call(token: str, method: str, **params) -> dict:
 
 
 def extract_chat_id(updates: dict) -> int | None:
-    """getUpdates 的结果 → 最近一个私聊消息的 chat ID。"""
+    """Return the chat ID from the latest private message in a getUpdates result."""
     for u in reversed(updates.get("result", [])):
         msg = u.get("message") or u.get("edited_message") or {}
         chat = msg.get("chat") or {}
@@ -156,7 +150,7 @@ def extract_chat_id(updates: dict) -> int | None:
 
 
 def wait_for_chat(token: str, seconds: int = 120) -> int | None:
-    """等用户给机器人发消息，返回 chat ID。机器人已经在别处运行时抛 RuntimeError("busy")。"""
+    """Wait for a user message and return its chat ID; raise RuntimeError("busy") if the bot runs elsewhere."""
     end = time.time() + seconds
     offset = None
     while time.time() < end:
@@ -176,10 +170,10 @@ def wait_for_chat(token: str, seconds: int = 120) -> int | None:
     return None
 
 
-# ---------------------------------------------------------------- 写配置
+# ---------------------------------------------------------------- Write configuration
 
 def q(v) -> str:
-    """Python 值 → TOML 值（JSON 的字符串写法 TOML 也认）。"""
+    """Convert a Python value to TOML; TOML accepts JSON string notation."""
     if isinstance(v, bool):
         return "true" if v else "false"
     if isinstance(v, (int, float)):
@@ -197,7 +191,7 @@ def render_courses(courses: list[dict]) -> str:
         lines = ["[[ilias.courses]]", f"name = {q(c['name'])}", f"crs = {int(c['crs'])}"]
         if c.get("groups"):
             lines.append(f"groups = {q([int(g) for g in c['groups']])}")
-        for k, v in c.items():                         # 保留旧配置里的其他设置，比如 read_pages
+        for k, v in c.items():                         # Preserve other existing settings such as read_pages.
             if k not in ("name", "crs", "groups"):
                 lines.append(f"{k} = {q(v)}")
         out.append("\n".join(lines))
@@ -205,7 +199,7 @@ def render_courses(courses: list[dict]) -> str:
 
 
 def render_config(a: dict, example: dict) -> str:
-    """把向导的回答变成 config.toml。没问到的设置用 config.example.toml 里的默认值。"""
+    """Render wizard answers as config.toml, using config.example.toml defaults for unasked settings."""
     g, llm, ilias = example["general"], example["llm"], example["ilias"]
     accounts = [{"name": "KIT", "host": "imap.kit.edu", "user": a["kit_user"],
                  "password_env": "KIT_PASSWORD"}]
@@ -263,7 +257,7 @@ skip_folders = {q(ilias.get('skip_folders', ''))}
 
 
 def render_env(v: dict) -> str:
-    """没填的也写一行空的（Gmail 除外），以后打开 .env 就知道还差什么。"""
+    """Write empty entries except Gmail so a future .env edit reveals missing values."""
     lines = [tr("env.head")]
     for k in ("KIT_PASSWORD", "GMAIL_APP_PASSWORD", v.get("_llm_key_env", "DEEPSEEK_API_KEY"),
               "TELEGRAM_BOT_TOKEN", "TELEGRAM_CHAT_ID", "ILIAS_ICAL_URL"):
@@ -273,14 +267,14 @@ def render_env(v: dict) -> str:
 
 
 def replace_courses(text: str, courses: list[dict]) -> str:
-    """把 config.toml 里所有 [[ilias.courses]] 换成新的，其他内容（包括注释）一字不动。"""
+    """Replace every [[ilias.courses]] block while preserving all other config text, including comments."""
     lines = text.splitlines(keepends=True)
     out: list[str] = []
-    block: list[str] | None = None        # 正在跳过的课程段
+    block: list[str] | None = None        # Course block currently being skipped.
     insert_at: int | None = None
 
     def end_block() -> None:
-        # 课程段末尾的注释和空行，其实是写给下一段的，留下来
+        # Comments and blank lines after a course block belong to the following block, so preserve them.
         keep = []
         while block and (not block[-1].strip() or block[-1].lstrip().startswith("#")):
             keep.insert(0, block.pop())
@@ -312,7 +306,7 @@ def replace_courses(text: str, courses: list[dict]) -> str:
         out.insert(insert_at, new + ("\n" if courses else ""))
     result = "".join(out)
     result = re.sub(r"\n{3,}", "\n\n", result)
-    tomllib.loads(result)                  # 写坏了就在这里报错，不会保存
+    tomllib.loads(result)                  # Fail here for invalid output before saving it.
     return result
 
 
@@ -335,10 +329,10 @@ def write_private(path: Path, text: str) -> None:
     tmp.replace(path)
 
 
-# ---------------------------------------------------------------- 选课程
+# ---------------------------------------------------------------- Course selection
 
 def choose_courses(items: list[dict], existing: dict[int, dict]) -> list[dict]:
-    """ILIAS 上的课程列表 → 用户选的课程。existing：旧配置里的课（按编号），保留它们的简称和其他设置。"""
+    """Turn an ILIAS course list into user-selected courses, preserving settings for existing course IDs."""
     from ilias_courses import groups_by_course, semester_label
     courses = [i for i in items if i["kind"] == "crs"]
     current = [c for c in courses if c.get("current")]
@@ -354,7 +348,7 @@ def choose_courses(items: list[dict], existing: dict[int, dict]) -> list[dict]:
     defaults = [i + 1 for i, c in enumerate(shown)
                 if (c["ref"] in existing) or (not existing and c.get("current"))]
     for i, c in enumerate(shown, 1):
-        if current and i == len(current) + 1:        # 这学期的列完了，下面是往届的
+        if current and i == len(current) + 1:        # Current-semester entries end here; earlier semesters follow.
             print(tr("c.older"))
         mark = "✓" if i in defaults else " "
         sem = "" if c.get("current") else f"  [{semester_label(c['semester'])}]"
@@ -388,7 +382,7 @@ def choose_courses(items: list[dict], existing: dict[int, dict]) -> list[dict]:
         else:
             entry.pop("groups", None)
         chosen.append(entry)
-    # 原来就有的课保持原来的顺序，新加的排在后面（什么都没改时文件也不变）
+    # Keep existing courses in order and append new ones, leaving the file unchanged when nothing changed.
     order = list(existing)
     chosen.sort(key=lambda e: order.index(e["crs"]) if e["crs"] in order else len(order))
     print(tr("c.chosen", n=len(chosen)))
@@ -412,10 +406,10 @@ def fetch_courses(user: str, password: str) -> list[dict]:
     return my_courses(Ilias(user, password))
 
 
-# ---------------------------------------------------------------- 流程
+# ---------------------------------------------------------------- Flow
 
 def step_kit(a: dict, env: dict, check: bool) -> list[dict] | None:
-    """返回 ILIAS 课程列表（检查失败或 --no-check 时是 None）。"""
+    """Return the ILIAS course list, or None when validation fails or --no-check is used."""
     title("s.kit")
     while True:
         a["kit_user"] = ask(tr("kit.user"), default=a.get("kit_user", ""), required=True)
@@ -535,7 +529,7 @@ def step_telegram(env: dict, check: bool) -> None:
 
 
 def pick_language() -> str:
-    """选好以后，向导后面的问题就用这个语言；也写进 config.toml 的 [general] language。"""
+    """Select the wizard language for following questions and config.toml [general] language."""
     print(i18n.PICK)
     codes = list(i18n.LANGS)
     for i, c in enumerate(codes, 1):
@@ -569,7 +563,7 @@ def run_full(check: bool) -> int:
 
     title("s.write")
     text = render_config(a, example)
-    tomllib.loads(text)                                      # 生成的文件一定要能读
+    tomllib.loads(text)                                      # Generated configuration must be parseable.
     for p in (CONFIG, ENV):
         b = backup(p)
         if b:
@@ -629,7 +623,7 @@ def main() -> int:
         if args.courses:
             return run_courses(check)
         if CONFIG.exists():
-            try:                                   # 已经有设置：用里面写的语言问
+            try:                                   # Existing settings: ask in their configured language.
                 i18n.use(tomllib.loads(CONFIG.read_text(encoding="utf-8")))
             except (OSError, tomllib.TOMLDecodeError):
                 pass

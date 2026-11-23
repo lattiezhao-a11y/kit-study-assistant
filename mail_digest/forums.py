@@ -1,12 +1,8 @@
-"""
-ILIAS 论坛每日总结（由 ilias_sync.py 在每天 forum_hour 那次运行时调用）
+"""Daily ILIAS forum summary, called by ilias_sync.py at forum_hour.
 
-  1. 打开每个论坛的讨论串列表，看每个讨论串的"最后回复时间"            —— 0 token
-  2. 比上次记下的时间新 → 打开这个讨论串，取出新帖                      —— 0 token
-     （打开讨论串后，ILIAS 会把里面的帖子标成"已读"）
-  3. 所有有新帖的讨论串打包成一次请求，每个讨论串总结成一句话             —— 花 token
-第一次运行只记下现在的时间，不打开讨论串、不总结。
-发给 AI 的只有帖子内容和"老师/学生"，不发名字和邮箱。
+The first run records timestamps only. Later runs inspect thread lists, open threads
+with posts newer than the recorded timestamp, and summarize all new posts in one LLM
+request. The AI receives post text and only teacher/student roles, never names or email addresses.
 """
 from __future__ import annotations
 
@@ -19,9 +15,9 @@ import urllib.request
 from digest import secret
 from i18n import tr
 
-MAX_THREADS = 40        # 每次最多总结多少个讨论串
-MAX_POSTS = 8           # 每个讨论串最多取最新的几个新帖
-POST_CHARS = 400        # 每个帖子最多发多少字
+MAX_THREADS = 40        # Maximum threads summarized per run.
+MAX_POSTS = 8           # Maximum newest posts read from each thread.
+POST_CHARS = 400        # Maximum characters sent from each post.
 
 MONTHS = {"jan": 1, "feb": 2, "mär": 3, "mar": 3, "apr": 4, "mai": 5, "may": 5, "jun": 6,
           "jul": 7, "aug": 8, "sep": 9, "okt": 10, "oct": 10, "nov": 11, "dez": 12, "dec": 12}
@@ -31,7 +27,7 @@ THREAD_LINK = re.compile(r'<a[^>]*href="([^"]*cmd=viewThread[^"]*thr_pk=(\d+)[^"
 
 
 def parse_date(text: str, today: dt.date) -> str:
-    """'2. Nov 2026, 15:46' / 'Heute, 09:10' → '2026-11-02T15:46'；找不到就返回空。"""
+    """Convert forum date text to ISO format; return an empty string if it cannot be parsed."""
     m = DATE_RE.search(text)
     if not m:
         return ""
@@ -74,7 +70,7 @@ def thread_posts(il, ref: str, thr: str, today: dt.date,
             f"&cmd=viewThread&ref_id={ref}&thr_pk={thr}&page=")
     bodies = [il.main(base + "0")]
     pages = [int(p) for p in re.findall(rf"thr_pk={thr}[^\"]*?page=(\d+)", html.unescape(bodies[0]))]
-    if pages and max(pages) > 0:                      # 长讨论串：新帖在最后一页
+    if pages and max(pages) > 0:                      # Long threads have their newest posts on the final page.
         bodies.append(il.main(base + str(max(pages))))
     posts = []
     for body in bodies:
@@ -122,7 +118,7 @@ def summarize(items: list[dict], llm: dict) -> tuple[dict[int, str], int]:
 
 
 def run(il, forums: dict, state: dict, llm: dict, today: dt.date) -> tuple[str, int, list[str]]:
-    """返回 (要推送的消息, token, 错误)。state["forum"] 会被更新。"""
+    """Return the message to send, token count, and error; update state["forum"]."""
     seen = state.setdefault("forum", {})
     first = not seen
     errors, todo = [], []
@@ -139,7 +135,7 @@ def run(il, forums: dict, state: dict, llm: dict, today: dt.date) -> tuple[str, 
                 continue
             seen[key] = th["last"]
             if first:
-                continue                                     # 第一次只记录，不打开
+                continue                                     # First run records timestamps without opening threads.
             todo.append((ref, info, th, prev or ""))
 
     items, meta = [], []
@@ -167,7 +163,7 @@ def run(il, forums: dict, state: dict, llm: dict, today: dt.date) -> tuple[str, 
 
 
 def build_message(meta: list[tuple], summaries: dict[int, str], tokens: int) -> str:
-    """meta：每个讨论串 (课, 标题, 新帖数, 有没有老师回复)；summaries：序号 → 一句话总结。"""
+    """meta contains course, title, post count, and teacher-reply status; summaries maps index to one-line summary."""
     lines = [tr("fo.title", n=len(meta))]
     for course in dict.fromkeys(c for c, *_ in meta):
         lines.append(f"\n<b>[{html.escape(course)}]</b>")

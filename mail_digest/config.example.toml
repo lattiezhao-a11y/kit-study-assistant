@@ -1,21 +1,21 @@
-# 复制为 config.toml 再修改。密码不要写在这里，写在 .env 里。
+# Copy this file to config.toml and edit it. Store passwords in .env, not here.
 
 [general]
-language = "zh"          # 语言：zh 中文 / de 德语（Deutsch）。也可以在 Telegram 里用 /language 切换
-since_days = 1          # 第一次运行（没有进度记录）时回看几天
-max_per_account = 100    # 每个邮箱每次最多处理多少封
-snippet_chars = 300      # 每封邮件发给 AI 的正文字数上限
-send_when_empty = false  # 没有新邮件时也推送一条"今天没有新邮件"
+language = "zh"          # Interface language: zh (Chinese) or de (German). It can also be changed with /language in Telegram.
+since_days = 1          # Number of days to look back on the first run, when no progress exists yet.
+max_per_account = 100    # Maximum number of messages to process from each mailbox per run.
+snippet_chars = 300      # Maximum number of body characters from each email sent to the AI.
+send_when_empty = false  # Send a “no new email today” message even when there is no new email.
 
 [llm]
 enabled = true
-base_url = "https://api.deepseek.com"   # 任何兼容 OpenAI 接口的服务都可以
-model = "deepseek-flash"                # 所有任务都用 deepseek-flash
+base_url = "https://api.deepseek.com"   # Any service compatible with the OpenAI API can be used.
+model = "deepseek-flash"                # Use deepseek-flash for every task.
 api_key_env = "DEEPSEEK_API_KEY"
-batch_size = 40                         # 每次请求最多分类多少封
-# 告诉 AI 你是谁、关心什么（越短越省 token）
+batch_size = 40                         # Maximum number of emails classified in one request.
+# Tell the AI who you are and what matters to you. Shorter text uses fewer tokens.
 about_me = "我是 KIT（卡尔斯鲁厄理工学院）的学生。课程、考试、作业截止、注册缴费、签证居留、银行、住房相关的邮件对我重要。"
-# 这些邮件一律归为"忽略"（还是会列在摘要最后的"已忽略"里，邮件也还在邮箱里）
+# Always classify these emails as “ignored”. They remain in the mailbox and are listed at the end of the digest.
 always_ignore = [
   "账号安全提醒：新设备登录、密码修改、两步验证、安全警告等（Google、Microsoft 等任何服务）",
   "验证码、登录链接、邮箱地址验证（任何 App 或网站，例如 Typeless）",
@@ -23,14 +23,14 @@ always_ignore = [
 ]
 
 [job]
-# 开始找工作时改成 true，并填写 profile；入职后改回 false，招聘邮件就全部归为"忽略"
+# Set this to true and fill in profile when you start job hunting. Set it back to false after starting a job to ignore recruiting emails.
 job_search = false
-profile = "Werkstudent"   # 以后补充：方向、城市/远程、技能
+profile = "Werkstudent"   # Add your field, preferred location or remote work, and skills later.
 
 [safety_net]
-# 可选的保险：AI 分完类之后，这些发件人的邮件至少是"必须处理"。
-# 只能往上调，永远不会把邮件往下调。不区分大小写，按"包含"匹配发件人名字或地址。
-# 用一段时间后，发现 AI 漏判了谁，就把谁加进来。
+# Optional safeguard: after AI classification, messages from these senders are at least “action required”.
+# This only raises priority, never lowers it. Matching is case-insensitive and checks whether the sender name or address contains the value.
+# Add senders here if the AI misses them after you have used the assistant for a while.
 always_important_senders = [
   # "mueller@kit.edu",
 ]
@@ -43,35 +43,35 @@ chat_id_env = "TELEGRAM_CHAT_ID"
 name = "KIT"
 host = "imap.kit.edu"
 port = 993
-user = "uxxxx"               # 你的 KIT 账号（u 开头）；不行的话试试 "uxxxx@student.kit.edu"
+user = "uxxxx"               # Your KIT account (starting with u); alternatively try "uxxxx@student.kit.edu".
 password_env = "KIT_PASSWORD"
 folder = "INBOX"
-llm = true                   # false = 这个邮箱的邮件不发给 AI，摘要里归为"未分类"
+llm = true                   # false means messages from this mailbox are not sent to the AI and are shown as “unclassified” in the digest.
 
 [[accounts]]
 name = "Gmail"
 host = "imap.gmail.com"
 port = 993
 user = "你的地址@gmail.com"
-password_env = "GMAIL_APP_PASSWORD"   # 应用专用密码，不是 Gmail 登录密码
+password_env = "GMAIL_APP_PASSWORD"   # An app password, not your Gmail sign-in password.
 folder = "INBOX"
 llm = true
-# Hotmail 设置自动转发到 Gmail 后，会在这里一起处理
+# Emails forwarded automatically from Hotmail to Gmail are processed here as well.
 
-# ---------------------------------------------------------------- ILIAS 截止时间
+# ---------------------------------------------------------------- ILIAS deadlines
 [ilias]
-user = "uxxxx"                    # KIT 账号（和 KIT 邮箱同一个）
-password_env = "KIT_PASSWORD"     # 用的就是 KIT 邮箱的密码
-ical_url_env = "ILIAS_ICAL_URL"   # ILIAS 日历订阅链接（写在 .env 里）
-quiet_hours = [0, 7]              # 0 点到 7 点不发 3 天 / 1 天的提醒（3 小时的照发）
-# 这些文件夹不进去看（旧考试、课件之类，没有截止时间）
+user = "uxxxx"                    # Your KIT account, the same one used for KIT email.
+password_env = "KIT_PASSWORD"     # The password for your KIT email account.
+ical_url_env = "ILIAS_ICAL_URL"   # ILIAS calendar subscription URL, stored in .env.
+quiet_hours = [0, 7]              # Do not send three-day or one-day reminders from 00:00 to 07:00; three-hour reminders are still sent.
+# Do not inspect these folders, such as old exams or course materials with no deadlines.
 skip_folders = 'Altklausur|Vorlesungsfolien|Lecture \(slides|Related Work|Code from Lecture|Vorlesungsmaterialien|Vorlesungswerbung'
 
-# 这学期的课，每门课一段 [[ilias.courses]]。
-# name = 你自己起的简称（机器人回答时用这个名字）
-# crs = 课程网址 goto.php/crs/ 后面的数字
-# groups = 自己所在的 Tutorium（网址 goto.php/grp/ 后面的数字），可以不写
-# read_pages = false：不读页面文字，只看新文件（没有每周作业的课用这个）
+# Add one [[ilias.courses]] block for each course this semester.
+# name = a short name you choose, which the bot uses in replies.
+# crs = the number after goto.php/crs/ in the course URL.
+# groups = your Tutorium; the number after goto.php/grp/ in its URL. This is optional.
+# read_pages = false: do not read page text, only new files. Use this for courses without weekly assignments.
 [[ilias.courses]]
 name = "Lineare Algebra"
 crs = 1234567
@@ -82,7 +82,7 @@ name = "Seminar"
 crs = 2345678
 read_pages = false
 
-# 手动添加的截止时间（ILIAS 上没写、或者写的不对的）。time 不知道就写 ""
+# Manually added deadlines for ones missing from or incorrect in ILIAS. Use "" for time if it is unknown.
 [[ilias.manual]]
 course = "Seminar"
 title = "Ausarbeitung abgeben"

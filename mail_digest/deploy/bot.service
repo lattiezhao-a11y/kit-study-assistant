@@ -8,7 +8,7 @@ Type=simple
 User=pi
 WorkingDirectory=/home/pi/mail_digest
 ExecStart=/usr/bin/python3 -u /home/pi/mail_digest/bot.py
-# 出错退出后 30 秒自动重启
+# Restart automatically 30 seconds after an error exit.
 Restart=always
 RestartSec=30
 

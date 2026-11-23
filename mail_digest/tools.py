@@ -29,24 +29,25 @@ from pathlib import Path
 import forums as forums_mod
 import i18n
 import ilias_sync
+import mail_imap
 from digest import DATA, QUOTE_START, body_text, imap_date, secret
 from i18n import tr
 
 HERE = Path(__file__).resolve().parent
 TZ = ilias_sync.TZ
-WEEKDAYS = "一二三四五六日"     # 课表工具的结果里用（给 AI 看）；日期显示见 i18n.day_label
+WEEKDAYS = "一二三四五六日"     # Used in timetable tool results for the AI; user-facing dates use i18n.day_label.
 TODO_FILE = DATA / "todos.json"
 TIMETABLE_FILE = DATA / "timetable.json"
 CONFIG_PATH = DATA / "config.toml"
 BACKUP_DIR = DATA / "backup"
-MAIL_DAYS = 7               # 邮件只看最近几天
-MAIL_LIST_MAX = 40          # 邮件列表最多列多少封
-MAIL_BODY_CHARS = 5000      # 一封邮件正文最多给 AI 多少字
-FORUM_POST_CHARS = 1500     # 追问论坛时每个帖子最多多少字
+MAIL_DAYS = 7               # Only inspect this many recent days of email.
+MAIL_LIST_MAX = 40          # Maximum emails listed at once.
+MAIL_BODY_CHARS = 5000      # Maximum email-body characters passed to the AI.
+FORUM_POST_CHARS = 1500     # Maximum characters from each forum post in a follow-up.
 FORUM_POSTS_MAX = 15
 
-CFG: dict = {}              # bot.py 启动时填入（改完设置会重新读）
-PENDING: dict = {}          # 等你确认的设置改动（只有程序能执行，AI 不能）
+CFG: dict = {}              # Populated at bot.py startup and reloaded after settings changes.
+PENDING: dict = {}          # Settings changes awaiting user confirmation; only program code can apply them.
 TOOLS: dict[str, dict] = {}
 
 
@@ -109,7 +110,7 @@ def parse_time(s: str) -> str:
     return f"{int(m.group(1)):02d}:{m.group(2)}"
 
 
-# ================================================================ O1 作业 / 截止时间
+# ================================================================ O1 Assignments and deadlines
 
 def _ensure_ids(store: list[dict]) -> None:
     n = max((d.get("id", 0) for d in store), default=0)
@@ -153,15 +154,15 @@ EXAM = re.compile(r"klausur|prüfung|pruefung|\bexam", re.I)
 
 def released(d: dict, published: dict) -> bool:
     """作业是不是已经发出来了（还没发布的只在日程表里写了截止日期）。拿不准就算发了，免得漏。"""
-    if d.get("source") in ("ical", "mail", "manual", "bot"):   # ILIAS 练习、邮件、自己加的：算
+    if d.get("source") in ("ical", "mail", "manual", "bot"):   # ILIAS exercises, mail, and user-added items count.
         return True
-    if d.get("release"):                                         # 课程页写了发布日期
+    if d.get("release"):                                         # The course page provides a release date.
         return d["release"] <= now().date().isoformat()
     nums = ilias_sync.SHEET_NO.findall(d["title"])
     pub = published.get(d["course"])
-    if not nums or not pub:                                      # 没编号 / 这门课没数据
+    if not nums or not pub:                                      # No number or no data for this course.
         return True
-    return int(nums[0]) in pub                                   # ILIAS 里出现过这个编号的文件或练习
+    return int(nums[0]) in pub                                   # A file or exercise with this number appears in ILIAS.
 
 
 @tool("ddl_list", "列出作业/考试/截止时间（带编号）。默认只列已经发布的作业，"
@@ -235,15 +236,18 @@ def ddl_add(a: dict) -> str:
     due, known = _due(a["date"], a.get("time", ""))
     if due[:10] < now().date().isoformat():
         raise ValueError("这个日期已经过去了")
-    d = {"course": a["course"].strip(), "title": a["title"].strip()[:100], "due": due,
+    title = a["title"].strip()[:100]
+    if not title:
+        raise ValueError("标题不能为空")
+    d = {"course": a["course"].strip(), "title": title, "due": due,
          "time_known": known, "source": "bot"}
     with ilias_sync.locked_store() as store:
         _ensure_ids(store)
         added = ilias_sync.merge(store, [d])
         _ensure_ids(store)
         if not added:
-            same = next(x for x in store if x["course"] == d["course"] and x["due"][:10] == due[:10])
-            return "这门课这一天已经有一个了，没有重复添加：" + _ddl_line(same)
+            same = ilias_sync.find_deadline(store, d)
+            return "已有这项截止时间，没有重复添加：" + _ddl_line(same)
         return "已添加：" + _ddl_line(d)
 
 
@@ -264,11 +268,13 @@ def ddl_edit(a: dict) -> str:
                 t or (f"{cur:%H:%M}" if d.get("time_known") else ""))
             due, known = _due(date, t)
             if due[:10] != d["due"][:10]:
-                # 记住旧日期：以后 ILIAS / 邮件再看到旧日期，不会又加回来
+                # Remember the old date so later ILIAS or email scans do not restore it.
                 d.setdefault("aliases", []).append(d["due"][:10])
             d["due"], d["time_known"], d["reminded"] = due, known, []
-        if a.get("title"):
-            d["title"] = a["title"].strip()[:100]
+        title = str(a.get("title") or "").strip()[:100]
+        if title and title != d["title"]:
+            d.setdefault("title_aliases", []).append(d["title"])
+            d["title"] = title
         if a.get("course"):
             d["course"] = a["course"].strip()
         store.sort(key=lambda x: x["due"])
@@ -285,7 +291,7 @@ def ddl_delete(a: dict) -> str:
         d["done_at"] = now().isoformat(timespec="minutes")
         out = "已删除：" + _ddl_line(d)
     if d.get("source") == "mail":
-        # 从邮件自动加进来的：顺便学一下，以后这类要不要都不加（我回复「确认」才会记住）
+        # For mail-added items, learn whether this category should be ignored after the user confirms.
         out += ("\n（这一条是从邮件里自动加进提醒的。请接着调用 settings_change："
                 f"key=about_me, action=add, value=「{tr('no_interest')}<把它概括成一类，不超过 20 字，"
                 "比如「短期交流/跨校课程项目」，不要只写这一个项目的名字>」。"
@@ -293,7 +299,7 @@ def ddl_delete(a: dict) -> str:
     return out
 
 
-# ================================================================ O2 杂事待办
+# ================================================================ O2 Miscellaneous to-dos
 
 def _todo_line(t: dict) -> str:
     s = f"#{t['id']} {t['text']}"
@@ -355,7 +361,7 @@ def todo_delete(a: dict) -> str:
     return "已删除：" + _todo_line(t)
 
 
-# ================================================================ O3 邮件（只读，最近 7 天）
+# ================================================================ O3 Email (read-only, last seven days)
 
 def _accounts(name: str = "") -> list[dict]:
     accs = [a for a in CFG.get("accounts", []) if not name or a["name"].lower() == name.lower()]
@@ -366,9 +372,9 @@ def _accounts(name: str = "") -> list[dict]:
 
 
 def _imap(acc: dict) -> imaplib.IMAP4_SSL:
-    conn = imaplib.IMAP4_SSL(acc["host"], acc.get("port", 993), timeout=30)
+    conn = mail_imap.connect(acc["host"], acc.get("port", 993), timeout=30)
     conn.login(acc["user"], secret(acc["password_env"]))
-    typ, _ = conn.select(acc.get("folder", "INBOX"), readonly=True)      # 只读
+    typ, _ = conn.select(acc.get("folder", "INBOX"), readonly=True)      # Read-only.
     if typ != "OK":
         raise RuntimeError("打不开收件箱")
     return conn
@@ -419,7 +425,7 @@ def mail_list(a: dict) -> str:
             for i, item in enumerate(data):
                 if not isinstance(item, tuple):
                     continue
-                # 有的服务器（比如 KIT）把 UID 放在内容后面那一段里
+                # Some servers, including KIT, put the UID in the content's trailing section.
                 after = data[i + 1] if i + 1 < len(data) and isinstance(data[i + 1], bytes) else b""
                 m = re.search(rb"UID (\d+)", item[0]) or re.search(rb"UID (\d+)", after)
                 msg = email.message_from_bytes(item[1], policy=email.policy.default)
@@ -443,9 +449,9 @@ def mail_list(a: dict) -> str:
 
 def _readable(text: str) -> str:
     text = text.replace("\r\n", "\n")
-    text = re.split(r"\n-- ?\n", text, maxsplit=1)[0]                  # 签名
+    text = re.split(r"\n-- ?\n", text, maxsplit=1)[0]                  # Signature.
     m = QUOTE_START.search(text)
-    if m and m.start() > 20:                                           # 引用的旧邮件
+    if m and m.start() > 20:                                           # Quoted earlier email.
         text = text[:m.start()]
     text = re.sub(r"https?://[^\s<>\"]{100,}", lambda u: u.group(0)[:60] + "…", text)
     lines = [re.sub(r"[ \t ]+", " ", ln).strip() for ln in text.split("\n")
@@ -487,9 +493,9 @@ def mail_read(a: dict) -> str:
         body[:MAIL_BODY_CHARS] + ("…（后面省略）" if len(body) > MAIL_BODY_CHARS else "")])
 
 
-# ================================================================ O4 设置（必须你确认）
+# ================================================================ O4 Settings (requires user confirmation)
 
-# 能改的设置：键 → (所在的 [段], 类型, 说明)
+# Mutable settings: key → (containing section, type, description)
 SETTINGS = {
     "always_ignore": ("llm", "list", "一律忽略的邮件（规则，一条一句话）"),
     "always_important_senders": ("safety_net", "list", "这些发件人的邮件至少是「必须处理」"),
@@ -544,7 +550,7 @@ def settings_change(a: dict) -> str:
     cfg = tomllib.loads(CONFIG_PATH.read_text(encoding="utf-8"))
     old = _get_setting(cfg, key)
     if kind == "list" or (kind == "text" and action != "set"):
-        rows = list(old) if kind == "list" else _lines(old)    # 自我介绍：按行加 / 删
+        rows = list(old) if kind == "list" else _lines(old)    # Self-description values are added and removed line by line.
         if action == "add":
             value = " ".join(value.split()) if kind == "text" else value
             if not value or value in rows:
@@ -586,7 +592,7 @@ def settings_change(a: dict) -> str:
             return " " + json.dumps(v, ensure_ascii=False)
         rows = v if kind == "list" else _lines(v)
         return "".join(f"\n  {i}. {x}" for i, x in enumerate(rows, 1)) or tr("set.empty")
-    # 预览由程序直接发给我，所以用当前语言
+    # The program sends this preview directly, so use the current language.
     shown = i18n.SETTING_DESC_DE[key] if i18n.LANG == "de" else desc
     preview = tr("set.preview", key=key, desc=shown, old=fmt(old), new=fmt(new))
     if kind == "text" and action == "add" and value.startswith(("不感兴趣", "Kein Interesse")):
@@ -654,7 +660,7 @@ def set_toml(text: str, section: str, key: str, value) -> str:
     else:
         line_end = text.find("\n", vs)
         line_end = len(text) if line_end == -1 else line_end
-        cm = re.search(r"[ \t]+#[^\"']*$", text[vs:line_end])        # 行尾注释保留
+        cm = re.search(r"[ \t]+#[^\"']*$", text[vs:line_end])        # Preserve trailing comments.
         ve = vs + cm.start() if cm else line_end
         comments = []
     return text[:vs] + _toml_value(value, comments) + text[ve:]
@@ -666,7 +672,7 @@ def write_config(sec: str, key: str, value) -> Path:
     new_text = set_toml(old_text, sec, key, value)
     expect = tomllib.loads(old_text)
     expect.setdefault(sec, {})[key] = value
-    if tomllib.loads(new_text) != expect:            # 除了这一项，别的都必须一模一样
+    if tomllib.loads(new_text) != expect:            # Everything except this item must remain identical.
         raise RuntimeError(tr("set.check_failed"))
     BACKUP_DIR.mkdir(exist_ok=True)
     backup = BACKUP_DIR / f"config.toml.{now():%Y%m%d-%H%M%S}"
@@ -688,7 +694,7 @@ def apply_pending() -> str:
     return tr("set.done", key=p["key"], backup=backup.name)
 
 
-# ================================================================ 语言（马上生效，不用确认）
+# ================================================================ Language (immediate, no confirmation)
 
 def set_language(code: str) -> bool:
     """切换语言：写进 config.toml 的 [general] language，马上生效。返回是不是真的改了。
@@ -697,7 +703,7 @@ def set_language(code: str) -> bool:
     if code not in i18n.LANGS:
         raise ValueError(f"只能是 {' / '.join(i18n.LANGS)}")
     cfg = tomllib.loads(CONFIG_PATH.read_text(encoding="utf-8"))
-    changed = cfg.get("general", {}).get("language") != code      # 没写过也写进去，以后一眼看得到
+    changed = cfg.get("general", {}).get("language") != code      # Write it even if absent so it is visible in configuration.
     if changed:
         write_config("general", "language", code)
     else:
@@ -720,7 +726,7 @@ def language_set(a: dict) -> str:
             f"从这条回答开始用{name}回答我，简短告诉我已经切换好了。")
 
 
-# ================================================================ O5 课表 / 日程
+# ================================================================ O5 Timetable and schedule
 
 _ical_cache: dict = {"at": 0.0, "events": []}
 
@@ -841,13 +847,13 @@ def schedule(a: dict) -> str:
     return "\n".join(out) + ("\n" + ical_err if ical_err else "")
 
 
-# ================================================================ O6 ILIAS 论坛（只读）
+# ================================================================ O6 ILIAS forums (read-only)
 
 _il: dict = {"obj": None, "at": 0.0}
 
 
 def _ilias(fresh: bool = False):
-    if fresh or not _il["obj"] or time.time() - _il["at"] > 900:     # 登录 15 分钟内复用
+    if fresh or not _il["obj"] or time.time() - _il["at"] > 900:     # Reuse a login for up to 15 minutes.
         icfg = CFG["ilias"]
         _il["obj"] = ilias_sync.Ilias(icfg["user"], secret(icfg["password_env"]))
         _il["at"] = time.time()
@@ -859,7 +865,7 @@ def _with_ilias(fn):
     try:
         return fn(_ilias())
     except Exception:
-        return fn(_ilias(fresh=True))                                # 登录过期：重新登录再试一次
+        return fn(_ilias(fresh=True))                                # Login expired: reconnect and retry once.
 
 
 def _forums(course: str = "") -> dict:

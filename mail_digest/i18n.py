@@ -1,22 +1,18 @@
-"""
-界面语言：中文 / 德语
+"""Chinese and German interface language support.
 
-  · 设置在 config.toml 的 [general] language = "zh" 或 "de"（不写就是中文）
-  · 在 Telegram 里用 /start、/language 点按钮选，或者直接说"我要用德语版"，马上生效
-  · 程序里写死、直接发到 Telegram 的文字都在下面的 TEXTS 里，每句都有中文和德语两个版本
-  · AI 写的内容（聊天回答、邮件摘要、论坛总结）靠提示词里的「ai.*」那几句决定语言
-  · 发给 AI 的提示词、工具结果保持中文（用户看不到，AI 回答时会翻译）
-
-每个脚本读完 config 后调用 use(cfg)；之后 tr("键") 就会给出当前语言的文字。
+Set [general] language in config.toml to zh or de, or choose it through Telegram's
+/start or /language buttons. TEXTS contains every fixed message sent directly to
+Telegram in both languages. AI response language is controlled by ai.* prompt text.
+Scripts call use(cfg) after loading configuration, then tr(key) returns current-language text.
 """
 from __future__ import annotations
 
 import datetime as dt
 
 LANGS = {"zh": "中文", "de": "Deutsch"}
-LANG = "zh"                     # 当前语言（use() 设置）
+LANG = "zh"                     # Current language, set by use().
 
-# 选语言时显示的那句话：还不知道用什么语言，所以两种都写
+# This language-selection prompt must include both languages because none is selected yet.
 PICK = "请选择语言 / Bitte wähle eine Sprache:"
 
 WEEKDAYS = {"zh": ["周一", "周二", "周三", "周四", "周五", "周六", "周日"],
@@ -29,38 +25,37 @@ def lang_of(cfg: dict) -> str:
 
 
 def use(cfg: dict) -> str:
-    """按 config 设置当前语言，返回语言代码。"""
+    """Set the current language from configuration and return its code."""
     global LANG
     LANG = lang_of(cfg)
     return LANG
 
 
-def tr(key: str, /, **kw) -> str:          # 「/」：文字里也可以有 {key}
+def tr(key: str, /, **kw) -> str:          # Positional-only separator allows translated text to contain {key}.
     s = TEXTS[key][LANG]
     return s.format(**kw) if kw else s
 
 
-# ---------------------------------------------------------------- 日期
+# ---------------------------------------------------------------- Dates
 
 def weekday(d: dt.date) -> str:
     return WEEKDAYS[LANG][d.weekday()]
 
 
 def day_label(d: dt.date) -> str:
-    """中文 11/30 周一；德语 Mo 30.11."""
+    """Chinese: 11/30 Mon; German: Mon 30.11."""
     if LANG == "de":
         return f"{weekday(d)} {d.day}.{d.month}."
     return f"{d.month}/{d.day} {weekday(d)}"
 
 
 def due_label(due: dt.datetime, time_known: bool) -> str:
-    """中文 11/30 周一 13:15 / 11/30 周一（没写具体时间）；德语 Mo 30.11. 13:15 / Mo 30.11. (ohne Uhrzeit)"""
+    """Format a due date with or without a specific time in the selected language."""
     return day_label(due) + (f" {due:%H:%M}" if time_known else tr("no_time"))
 
 
 def date_text(iso: str, short: bool = False) -> str:
-    """YYYY-MM-DD → 显示用。中文保持原样（short：MM-DD）；德语 01.12.2026（short：1.12.）。
-    看不懂的（AI 偶尔写错格式）原样返回。"""
+    """Format YYYY-MM-DD for display; return unparseable values unchanged."""
     if LANG == "zh":
         return iso[5:] if short else iso
     try:
@@ -70,8 +65,8 @@ def date_text(iso: str, short: bool = False) -> str:
     return f"{d.day}.{d.month}." if short else f"{d.day:02d}.{d.month:02d}.{d.year}"
 
 
-# ---------------------------------------------------------------- 设置说明（改设置时的预览里显示）
-# 中文说明就是 tools.SETTINGS 里的那句，这里只放德语
+# ---------------------------------------------------------------- Settings descriptions shown in change previews
+# Chinese descriptions come from tools.SETTINGS; only German versions are kept here.
 SETTING_DESC_DE = {
     "always_ignore": "Mails, die immer ignoriert werden (eine Regel pro Zeile)",
     "always_important_senders": "Mails dieser Absender sind mindestens „Zu erledigen“",
@@ -83,7 +78,7 @@ SETTING_DESC_DE = {
 }
 
 
-# ---------------------------------------------------------------- 文字
+# ---------------------------------------------------------------- Text
 
 HELP_ZH = """我是你的学习助理 🤖
 直接用中文跟我说话就行。
@@ -122,13 +117,13 @@ Du kannst mir zum Beispiel schreiben:
 • Kein Interesse: „So etwas wie XX interessiert mich nicht“ (kommt in dein Profil, solche Mails bekommen dann keine Erinnerung mehr)"""
 
 TEXTS: dict[str, dict[str, str]] = {
-    # ---- 通用
+    # ---- General
     "no_time": {"zh": "（没写具体时间）", "de": " (ohne Uhrzeit)"},
     "lang.done": {"zh": "✅ 语言：中文", "de": "✅ Sprache: Deutsch"},
-    # 「不感兴趣」这一行的开头：写进 about_me，邮件分类时据此忽略
+    # Prefix for the “not interested” line stored in about_me and used by email classification.
     "no_interest": {"zh": "不感兴趣：", "de": "Kein Interesse: "},
 
-    # ---- 给 AI 的语言要求（提示词是中文的，只换这几句）
+    # ---- AI language instructions; the prompt itself remains Chinese and only these phrases change.
     "ai.reply_rule": {
         "zh": "用中文回答",
         "de": "一律用德语（Deutsch）回答，我用中文说话也用德语答。工具结果大多是中文，转述时翻译成德语；"
@@ -165,14 +160,14 @@ TEXTS: dict[str, dict[str, str]] = {
     "bot.confirm_hint": {"zh": "回复「确认」生效；回复别的内容就取消（{minutes} 分钟内有效）。",
                          "de": "Antworte mit „ja“, um sie zu übernehmen; jede andere Antwort verwirft sie "
                                "(gültig {minutes} Minuten)."},
-    # Telegram 输入框旁边「/」菜单里的命令说明
+    # Descriptions for the Telegram slash-command menu.
     "cmd.start": {"zh": "开始 / 选择语言", "de": "Start / Sprache wählen"},
     "cmd.language": {"zh": "切换语言（中文 / Deutsch）", "de": "Sprache wechseln (中文 / Deutsch)"},
     "cmd.new": {"zh": "清空对话记忆", "de": "Gesprächsverlauf löschen"},
     "cmd.usage": {"zh": "今天和本月的 token 用量", "de": "Token-Verbrauch heute / diesen Monat"},
     "cmd.help": {"zh": "使用说明", "de": "Hilfe"},
 
-    # ---- tools.py（改设置：预览和结果由程序直接发出）
+    # ---- tools.py (the program directly sends settings-change previews and results)
     "set.preview": {"zh": "要修改设置「{key}」（{desc}）\n原来：{old}\n改成：{new}",
                     "de": "Einstellung „{key}“ ändern ({desc})\nVorher:{old}\nNachher:{new}"},
     "set.empty": {"zh": " （空）", "de": " (leer)"},
@@ -187,7 +182,7 @@ TEXTS: dict[str, dict[str, str]] = {
     "set.check_failed": {"zh": "改完检查没通过，没有修改 config.toml",
                          "de": "Prüfung nach der Änderung fehlgeschlagen, config.toml wurde nicht geändert"},
 
-    # ---- digest.py（邮件摘要）
+    # ---- digest.py (email digest)
     "cat.must": {"zh": "🔴 必须处理", "de": "🔴 Zu erledigen"},
     "cat.job": {"zh": "💼 求职机会", "de": "💼 Jobangebote"},
     "cat.maybe": {"zh": "🟡 可以看看", "de": "🟡 Lesenswert"},
@@ -216,7 +211,7 @@ TEXTS: dict[str, dict[str, str]] = {
     "env.missing": {"zh": "缺少环境变量 {name}（写在 .env 里）",
                     "de": "Umgebungsvariable {name} fehlt (gehört in die .env)"},
 
-    # ---- remind.py（早上汇总、3 小时提醒）
+    # ---- remind.py (morning summary and three-hour reminders)
     "rm.todo": {"zh": "📝 待办", "de": "📝 To-do"},
     "rm.morning": {"zh": "☀️ <b>近 3 天要做的事</b>", "de": "☀️ <b>Die nächsten 3 Tage</b>"},
     "rm.today": {"zh": "🔴 <b>今天截止</b>", "de": "🔴 <b>Heute fällig</b>"},
@@ -258,7 +253,7 @@ TEXTS: dict[str, dict[str, str]] = {
                           "de": "Mehr als {n} Seiten auf einmal geöffnet, abgebrochen "
                                 "(Kurseinstellungen in der config prüfen)"},
 
-    # ---- forums.py（论坛每日总结）
+    # ---- forums.py (daily forum summary)
     "fo.title": {"zh": "💬 <b>ILIAS 论坛今日新帖</b>（{n} 个讨论串）",
                  "de": "💬 <b>Neue Beiträge im ILIAS-Forum heute</b> ({n} Threads)"},
     "fo.thread": {"zh": "• {title}（{n} 个新帖{tag}）", "de": "• {title} ({n} neue Beiträge{tag})"},
@@ -269,14 +264,14 @@ TEXTS: dict[str, dict[str, str]] = {
     "fo.too_many": {"zh": "有新帖的讨论串有 {n} 个，只总结了 {max} 个",
                     "de": "{n} Threads mit neuen Beiträgen, nur {max} davon zusammengefasst"},
 
-    # ---- ilias_courses.py（列出我的课程）
+    # ---- ilias_courses.py (list my courses)
     "ic.head": {"zh": "ILIAS 上你加入了 {n} 门课（✓ = config.toml 里已经在跟踪）：\n",
                 "de": "Du bist in ILIAS in {n} Kursen (✓ = wird in config.toml schon verfolgt):\n"},
     "ic.current": {"zh": "（这学期）", "de": " (dieses Semester)"},
     "ic.lost": {"zh": "其他 Tutorium（没找到属于哪门课，或者是往届的）",
                 "de": "Weitere Tutorien (Kurs nicht gefunden oder aus früheren Semestern)"},
 
-    # ---- setup.py（安装向导）：在 setup.py 里用 tr("hello") 就是这里的 "su.hello"
+    # ---- setup.py (setup wizard): tr("hello") in setup.py resolves to "su.hello" here.
     "su.hello": {"zh": "👋 KIT 学习助理 · 安装向导\n"
                        "大约 5 分钟。每一步都会马上检查，全部答完才会写文件；随时按 Ctrl+C 退出，什么都不会改。",
                  "de": "👋 KIT-Lernassistent · Einrichtung\n"
@@ -428,20 +423,18 @@ TEXTS: dict[str, dict[str, str]] = {
     "su.w.no_config": {"zh": "还没有 config.toml，请先运行 python3 setup.py 完成安装。",
                        "de": "Es gibt noch keine config.toml, bitte zuerst python3 setup.py ausführen."},
 
-    # 向导生成的 config.toml / .env 里的注释
-    "su.cfg.head": {"zh": "# 由安装向导 setup.py 生成（{time}）。可以直接改；密码不在这里，在 .env 里。\n"
-                          "# 新学期重选课程：python3 setup.py --courses",
-                    "de": "# Erstellt vom Einrichtungsassistenten setup.py ({time}). Darf direkt bearbeitet werden; "
-                          "Passwörter stehen nicht hier, sondern in .env.\n"
-                          "# Neues Semester, Kurse neu wählen: python3 setup.py --courses"},
-    "su.cfg.language": {"zh": "# 界面语言：zh = 中文，de = 德语", "de": "# Sprache: zh = Chinesisch, de = Deutsch"},
-    "su.cfg.since_days": {"zh": "# 第一次运行时回看几天", "de": "# Wie viele Tage beim ersten Lauf zurückgeschaut wird"},
-    "su.cfg.snippet": {"zh": "# 每封邮件发给 AI 的正文字数上限", "de": "# Höchstens so viele Zeichen pro Mail gehen an die KI"},
-    "su.cfg.acc_llm": {"zh": "# false = 这个邮箱的邮件不发给 AI", "de": "# false = Mails dieses Postfachs gehen nicht an die KI"},
-    "su.cfg.ignore": {"zh": "# 这些邮件一律归为\"忽略\"（还是会列在摘要最后，邮件也还在邮箱里）",
-                      "de": "# Diese Mails gelten immer als „Ignoriert“ (stehen trotzdem am Ende der "
-                            "Zusammenfassung und bleiben im Postfach)"},
-    "su.cfg.ignore_rules": {   # 一行一条，写进 always_ignore
+    # Comments emitted into config.toml and .env by the setup wizard.
+    "su.cfg.head": {"zh": "# Generated by setup.py ({time}). You may edit it directly; passwords are stored in .env.\n"
+                          "# Select courses for a new semester: python3 setup.py --courses",
+                    "de": "# Generated by setup.py ({time}). You may edit it directly; passwords are stored in .env.\n"
+                          "# Select courses for a new semester: python3 setup.py --courses"},
+    "su.cfg.language": {"zh": "# Interface language: zh = Chinese, de = German", "de": "# Interface language: zh = Chinese, de = German"},
+    "su.cfg.since_days": {"zh": "# Number of days to look back on the first run", "de": "# Number of days to look back on the first run"},
+    "su.cfg.snippet": {"zh": "# Maximum email-body characters sent to the AI", "de": "# Maximum email-body characters sent to the AI"},
+    "su.cfg.acc_llm": {"zh": "# false = emails from this account are not sent to the AI", "de": "# false = emails from this account are not sent to the AI"},
+    "su.cfg.ignore": {"zh": "# Always classify these emails as ignored; they remain in the mailbox and digest.",
+                      "de": "# Always classify these emails as ignored; they remain in the mailbox and digest."},
+    "su.cfg.ignore_rules": {   # One entry per line, written to always_ignore.
         "zh": "账号安全提醒：新设备登录、密码修改、两步验证、安全警告等（Google、Microsoft 等任何服务）\n"
               "验证码、登录链接、邮箱地址验证（任何 App 或网站，例如 Typeless）\n"
               "订阅类：newsletter、营销订阅、订阅确认、订阅续费提醒。注意：课程、ILIAS、KIT 学校和院系的邮件列表不算订阅，照常判断",
@@ -450,16 +443,13 @@ TEXTS: dict[str, dict[str, str]] = {
               "Bestätigungscodes, Login-Links, Bestätigung der E-Mail-Adresse (jede App oder Website, z. B. Typeless)\n"
               "Abos: Newsletter, Werbung, Abo-Bestätigungen, Verlängerungs-Erinnerungen. Achtung: Mailinglisten von "
               "Kursen, ILIAS, KIT und Fakultäten zählen nicht als Abo und werden normal eingeordnet"},
-    "su.cfg.job": {"zh": "# 开始找工作时改成 true，并填写 profile",
-                   "de": "# Auf true setzen, wenn du einen Job suchst, und profile ausfüllen"},
-    "su.cfg.safety": {"zh": "# 这些发件人的邮件至少是\"必须处理\"（只会往上调）。按\"包含\"匹配，不区分大小写。",
-                      "de": "# Mails dieser Absender sind mindestens „Zu erledigen“ (wird nur hochgestuft). "
-                            "Teilstring-Vergleich, Groß-/Kleinschreibung egal."},
-    "su.cfg.quiet": {"zh": "# 这段时间不发 3 天 / 1 天的提醒（3 小时的照发）",
-                     "de": "# In dieser Zeit keine 3-Tage-/1-Tag-Erinnerungen (die 3-Stunden-Erinnerung kommt trotzdem)"},
-    "su.cfg.courses": {"zh": "# 跟踪的课程。crs = 课程编号；groups = 你的 Tutorium；read_pages = false：只看新文件，不读页面文字",
-                       "de": "# Verfolgte Kurse. crs = Kursnummer; groups = deine Tutorien; "
-                             "read_pages = false: nur neue Dateien, Seitentext nicht lesen"},
-    "su.env.head": {"zh": "# 由安装向导 setup.py 生成。全是密码：不要发给别人，不要上传。",
-                    "de": "# Erstellt von setup.py. Alles Passwörter: nicht weitergeben, nicht hochladen."},
+    "su.cfg.job": {"zh": "# Set to true and fill in profile when you start job hunting", "de": "# Set to true and fill in profile when you start job hunting"},
+    "su.cfg.safety": {"zh": "# Emails from these senders are at least action required; matching is case-insensitive.",
+                      "de": "# Emails from these senders are at least action required; matching is case-insensitive."},
+    "su.cfg.quiet": {"zh": "# Do not send three-day or one-day reminders during this period; three-hour reminders remain enabled.",
+                     "de": "# Do not send three-day or one-day reminders during this period; three-hour reminders remain enabled."},
+    "su.cfg.courses": {"zh": "# Tracked courses. crs = course number; groups = your Tutorium; read_pages = false reads only new files.",
+                       "de": "# Tracked courses. crs = course number; groups = your Tutorium; read_pages = false reads only new files."},
+    "su.env.head": {"zh": "# Generated by setup.py. This file contains passwords: never share or upload it.",
+                    "de": "# Generated by setup.py. This file contains passwords: never share or upload it."},
 }

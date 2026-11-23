@@ -33,7 +33,7 @@ def check(name: str, ok: bool, info: str = "") -> None:
     print(f"{'✅' if ok else '❌'} {name}" + (f"  —  {info}" if info and not ok else ""))
 
 
-# 编的「Meine Kurse und Gruppen」页面：结构和真实页面一样
+# Synthetic “Meine Kurse und Gruppen” page with the same structure as the real page.
 PAGE = """<html><body><main>
 <h2>Meine Kurse und Gruppen</h2>
 <h3>1111 – Lineare Algebra</h3>
@@ -174,20 +174,20 @@ def part_pieces() -> None:
     check("只换课程：课程换掉，其他设置和手动截止时间一个不变",
           cfg["ilias"]["courses"] == new_courses and same_rest, new)
     headers = [ln for ln in new.splitlines() if ln.strip() == "[[ilias.courses]]"]
-    check("只换课程：注释也留着", "# 手动添加的截止时间" in new and "# 这学期的课，每门课一段" in new
+    check("只换课程：注释也留着", "# Manually added deadlines" in new and "# Add one [[ilias.courses]] block" in new
           and len(headers) == 2, new)
     empty = tomllib.loads(wiz.replace_courses(src, []))
     check("只换课程：可以清空", "courses" not in empty["ilias"] and empty["ilias"]["manual"] == old["ilias"]["manual"])
-    # 选课：用编的回答代替键盘输入
+    # Course selection: use synthetic answers instead of keyboard input.
     import builtins
     items = ic.my_courses(FakeIlias(), today=dt.date(2026, 11, 23))
     existing = {600003: {"name": "Seminar", "crs": 600003, "read_pages": False},
                 600001: {"name": "LA II", "crs": 600001}}
-    answers = iter(["n", "", "", ""])          # 不看往届；回车 = 默认（原来的两门）；简称都用原来的
+    answers = iter(["n", "", "", ""])          # Skip prior semesters; Enter keeps defaults and existing short names.
     real_input, builtins.input = builtins.input, lambda *_: next(answers)
     try:
         chosen = wiz.choose_courses(items, existing)
-        answers = iter(["n", "1 2", "", "Prog"])  # 新加一门 600002
+        answers = iter(["n", "1 2", "", "Prog"])  # Add course 600002.
         chosen2 = wiz.choose_courses(items, existing)
     finally:
         builtins.input = real_input
@@ -207,16 +207,16 @@ def part_flow() -> None:
     print("\n========== 完整走一遍向导（--no-check，用编好的回答）==========")
     with tempfile.TemporaryDirectory() as d:
         data = Path(d)
-        answers = ["1",                      # 语言：中文
-                   "uabcd", "pw-SECRET-1",   # KIT 账号、密码
-                   "600001 600002",          # 手动输入课程编号（--no-check 不读 ILIAS）
-                   "LA II", "Prog",          # 简称
-                   "",                       # iCal：跳过
-                   "n",                      # 不要 Gmail
-                   "", "", "sk-SECRET-2",    # AI：地址、模型用默认，key
-                   "123:SECRET-3",           # Telegram token
-                   "4242",                   # chat ID（--no-check 时手动输入）
-                   ""]                       # 自我介绍：默认
+        answers = ["1",                      # Language: Chinese.
+                   "uabcd", "pw-SECRET-1",   # KIT account and password.
+                   "600001 600002",          # Manually enter course IDs because --no-check does not read ILIAS.
+                   "LA II", "Prog",          # Short names.
+                   "",                       # Skip iCal.
+                   "n",                      # Do not configure Gmail.
+                   "", "", "sk-SECRET-2",    # Use default AI URL and model; supply a key.
+                   "123:SECRET-3",           # Telegram token.
+                   "4242",                   # Chat ID entered manually with --no-check.
+                   ""]                       # Use the default self-description.
         r = run_wizard(data, answers)
         cfg_path, env_path = data / "config.toml", data / ".env"
         ok = r.returncode == 0 and cfg_path.exists() and env_path.exists()
@@ -237,12 +237,12 @@ def part_flow() -> None:
             check(".env 和 config.toml 只有自己能读（600）",
                   (env_path.stat().st_mode & 0o777) == 0o600 and (cfg_path.stat().st_mode & 0o777) == 0o600)
 
-        # 已经有配置：选 3 取消 → 什么都不变
+        # Existing configuration: choose 3 to cancel without changes.
         before = cfg_path.read_text(encoding="utf-8")
         r = run_wizard(data, ["3"])
         check("已有配置时可以取消，文件不变", r.returncode == 1 and cfg_path.read_text(encoding="utf-8") == before)
 
-        # 新学期：--courses，保留旧的简称，加一门新课
+        # New semester: --courses retains old short names and adds one course.
         cfg_text = before.replace('name = "Prog"\ncrs = 600002', 'name = "Prog"\ncrs = 600002\nread_pages = false')
         cfg_path.write_text(cfg_text, encoding="utf-8")
         r = run_wizard(data, ["600002 700001", "", "Neu"], "--courses")
@@ -256,13 +256,13 @@ def part_flow() -> None:
         backups = list((data / "backup").glob("config.toml.*"))
         check("改之前备份了旧的 config.toml", len(backups) >= 1)
 
-        # Ctrl+C / 输入中断：什么都不写
+        # Ctrl+C or interrupted input writes nothing.
         with tempfile.TemporaryDirectory() as d2:
-            r = run_wizard(Path(d2), ["1", "uabcd"])          # 答到一半就没了
+            r = run_wizard(Path(d2), ["1", "uabcd"])          # Input ends midway through setup.
             check("中途退出，什么文件都不写", r.returncode == 1 and not list(Path(d2).iterdir()))
 
 
-CJK = re.compile(r"[一-鿿　-〿！-～]")    # 汉字和中文标点
+CJK = re.compile(r"[一-鿿　-〿！-～]")    # Chinese characters and punctuation.
 
 
 def part_german() -> None:
@@ -285,7 +285,7 @@ def part_german() -> None:
 
     with tempfile.TemporaryDirectory() as d:
         data = Path(d)
-        answers = ["2",                      # 语言：Deutsch
+        answers = ["2",                      # Language: German.
                    "uabcd", "pw-SECRET-1", "600001", "LA II", "", "n",
                    "", "", "sk-SECRET-2", "123:SECRET-3", "4242", ""]
         r = run_wizard(data, answers)
@@ -294,14 +294,14 @@ def part_german() -> None:
         check("德语向导跑完", ok, r.stdout[-800:] + r.stderr[-800:])
         if not ok:
             return
-        # 选语言那两行本来就是两种语言（"请选择语言 / …"、"1. 中文"），不算
+        # The two language-selection lines intentionally contain both languages and are excluded.
         shown = "\n".join(l for l in r.stdout.splitlines() if i18n.PICK not in l and "中文" not in l)
         check("德语向导：问题都是德语，没有中文", "KIT-Konto" in shown and not CJK.search(shown),
               str(CJK.findall(shown)[:10]) + shown[:300])
         text = cfg_path.read_text(encoding="utf-8")
         cfg = tomllib.loads(text)
-        check("德语向导：language = de，config.toml 里的注释、默认介绍、忽略规则都是德语",
-              cfg["general"]["language"] == "de" and "# Sprache:" in text and not CJK.search(text)
+        check("德语向导：language = de，config.toml 里的注释是英语，默认介绍、忽略规则都是德语",
+              cfg["general"]["language"] == "de" and "# Interface language:" in text and not CJK.search(text)
               and cfg["llm"]["about_me"].startswith("Ich studiere") and len(cfg["llm"]["always_ignore"]) == 3,
               str(CJK.findall(text)[:10]))
         check("德语向导：.env 的说明也是德语", not CJK.search((data / ".env").read_text(encoding="utf-8")))

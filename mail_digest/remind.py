@@ -1,13 +1,9 @@
 #!/usr/bin/env python3
-"""
-截止时间提醒（0 token，只看 deadlines.json）
+"""Zero-token deadline reminders based only on deadlines.json.
 
-两种模式：
-  python3 remind.py --morning   每天 07:00：近 3 天的截止时间汇总（今天 / 明天 / 3 天内）
-                                近 3 天什么都没有就不发
-  python3 remind.py             白天每小时：还剩不到 3 小时的发一条紧急提醒
-                                （同一个只提醒一次；没写具体时间的不发，只出现在早上的汇总里）
-加 --dry-run 只打印，不推送、不保存。
+--morning sends a 07:00 summary of upcoming three-day deadlines. The default mode
+sends one urgent daytime reminder for deadlines less than three hours away. --dry-run
+prints without sending or saving.
 """
 from __future__ import annotations
 
@@ -25,11 +21,11 @@ from digest import DATA, load_env, send_telegram
 from i18n import tr
 from ilias_sync import TZ, locked_store, now, save_json, upcoming
 
-TODO_FILE = DATA / "todos.json"      # 机器人记的杂事待办：写了日期的也一起提醒
+TODO_FILE = DATA / "todos.json"      # Dated miscellaneous to-dos recorded by the bot are also reminded.
 
 
 def todo_items() -> list[dict]:
-    """有日期、还没完成的待办，变成和截止时间一样的格式。"""
+    """Convert unfinished dated to-dos to the same format as deadlines."""
     todos = json.loads(TODO_FILE.read_text(encoding="utf-8")) if TODO_FILE.exists() else []
     out = []
     for t in todos:
@@ -45,7 +41,7 @@ def todo_items() -> list[dict]:
 
 
 def save_todo_reminded(items: list[dict]) -> None:
-    """把"已提醒"写回 todos.json（重新读一次再改，避免盖掉机器人刚写的）。"""
+    """Persist the reminded flag after rereading todos.json to avoid overwriting bot changes."""
     done = {d["todo_id"]: d["reminded"] for d in items if "todo_id" in d}
     if not done or not TODO_FILE.exists():
         return
@@ -91,7 +87,7 @@ def morning(store: list[dict]) -> str:
 def urgent(store: list[dict], quiet: list[int]) -> str:
     t = now()
     a, b = quiet
-    if (a <= t.hour < b) if a <= b else (t.hour >= a or t.hour < b):   # 23→7 这种跨午夜的也行
+    if (a <= t.hour < b) if a <= b else (t.hour >= a or t.hour < b):   # Also supports ranges spanning midnight, e.g. 23→7.
         return ""
     hits = []
     for d in upcoming(store):
@@ -122,11 +118,11 @@ def main() -> int:
 
     with locked_store(save=not args.dry_run) as store:
         todos = todo_items()
-        combined = store + todos               # 只是一起看；待办不会写进 deadlines.json
+        combined = store + todos               # Read together only; to-dos are never written into deadlines.json.
         combined.sort(key=lambda x: x["due"])
         text = morning(combined) if args.morning else urgent(combined, quiet)
         if text and not args.dry_run:
-            send_telegram(text, cfg["telegram"])   # 发送失败就不保存"已提醒"，下次再试
+            send_telegram(text, cfg["telegram"])   # Do not save “reminded” on delivery failure so it is retried.
             if not args.morning:
                 save_todo_reminded(todos)
 

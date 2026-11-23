@@ -23,6 +23,7 @@ data/
 # 个人笔记：只留在本地，对外的说明写在 README 里
 PLAN.md
 CLAUDE.md
+AGENTS.md
 .claude/
 
 # 编辑器和 Python 缓存

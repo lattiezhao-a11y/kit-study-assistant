@@ -1,20 +1,10 @@
 #!/usr/bin/env python3
-"""
-ILIAS 截止时间同步（只读，不在 ILIAS 里做任何操作）
+"""Read-only ILIAS deadline synchronization.
 
-每次运行：
-  1. 读 ILIAS 日历订阅（iCal）里的 Abgabetermin / Klausur            —— 0 token
-  2. 登录 ILIAS，逐个打开配置里的课程、文件夹、自己的 Tutorium        —— 0 token
-  3. 和上次看到的内容比较，只挑出【新出现的】带日期的文字、新的作业 PDF
-  4. 有新内容才打包成一次请求，让 AI 找出截止时间                     —— 只有这一步花 token
-  5. 合并进 deadlines.json；有新的截止时间就推送到 Telegram
-
-提醒由 remind.py 每小时检查 deadlines.json 完成（0 token）。
-
-用法：
-  python3 ilias_sync.py             正常运行
-  python3 ilias_sync.py --dry-run   只打印，不推送、不保存
-  python3 ilias_sync.py --list      打印目前记录的所有截止时间
+Each run reads iCal deadlines, crawls configured courses for new dated text and
+assignment PDFs, asks the AI to extract deadlines only when new content exists,
+merges them into deadlines.json, and sends newly found deadlines to Telegram.
+remind.py checks that store hourly. Use --dry-run or --list for the respective modes.
 """
 from __future__ import annotations
 
@@ -51,12 +41,12 @@ DEADLINES_FILE = DATA / "deadlines.json"
 LOCK_FILE = DATA / "deadlines.lock"
 UA = "Mozilla/5.0 (X11; Linux aarch64) ilias-deadline-sync"
 
-MAX_PAGES = 200          # 每次最多打开多少个页面（防止跑飞；论坛那次会多一些）
-MAX_PDFS = 40            # 每次最多读多少个新 PDF（没读到的下次接着读）
-PDF_CHARS = 1200         # 每个 PDF 发给 AI 的字数上限
-SEGMENT_CHARS = 500      # 每段网页文字的字数上限
-LLM_CHARS = 14000        # 每次请求最多发多少字（超过就分批）
-WEEKDAYS = "一二三四五六日"     # 只用在给 AI 的提示词里（显示给你看的日期见 i18n.py）
+MAX_PAGES = 200          # Maximum pages opened per run; forum runs may use more.
+MAX_PDFS = 40            # Maximum new PDFs read per run; remaining files wait for the next run.
+PDF_CHARS = 1200         # Maximum characters sent to the AI from each PDF.
+SEGMENT_CHARS = 500      # Maximum characters in each webpage-text segment.
+LLM_CHARS = 14000        # Maximum characters per AI request; larger inputs are batched.
+WEEKDAYS = "一二三四五六日"     # Used only in the AI prompt; user-facing dates come from i18n.py.
 
 DATE_HINT = re.compile(
     r"\b\d{1,2}\.\s?\d{1,2}\.(?:\s?\d{2,4})?"
@@ -68,14 +58,14 @@ NOISE = re.compile(r"Letzter Beitrag|Beiträge \(Ungelesen\)|powered by ILIAS|We
                    r"Nutzungsvereinbarung|IuK-Ordnung", re.I)
 EXERCISE_FILE = re.compile(r"übung|uebung|blatt|sheet|exercise|assignment|aufgabe|abgabe|"
                            r"homework|hausaufgabe", re.I)
-# 作业编号："Übungsblatt 03"、"Uebungsblatt_02.pdf"、"Exercise Sheet 2"、"Übung 3" → 3 / 2 / 2 / 3
+# Assignment number examples: “Übungsblatt 03”, “Uebungsblatt_02.pdf”, “Exercise Sheet 2”, and “Übung 3” map to 3, 2, 2, and 3.
 SHEET_NO = re.compile(r"(?:blatt|sheet|übung|uebung|exercise|assignment|aufgabe|homework|abgabe)"
                       r"[\s_\-]*(?:nr\.?\s*)?0*(\d{1,2})(?!\d)", re.I)
 NOT_EXERCISE = re.compile(r"lösung|loesung|solution|folie|slides|klausur|exam|template|"
                           r"merkblatt|cheat|interpreter|tutorium-\d", re.I)
 
 
-# ---------------------------------------------------------------- 小工具
+# ---------------------------------------------------------------- Utilities
 
 def now() -> dt.datetime:
     return dt.datetime.now(TZ)
@@ -99,7 +89,7 @@ def save_json(path: Path, data) -> None:
 
 @contextlib.contextmanager
 def locked_store(save: bool = True):
-    """读写 deadlines.json 时加锁：ilias_sync 和 remind 可能同时在改它。"""
+    """Lock deadlines.json because ilias_sync and remind can modify it concurrently."""
     with open(LOCK_FILE, "w") as lock:
         fcntl.flock(lock, fcntl.LOCK_EX)
         store = load_json(DEADLINES_FILE, [])
@@ -109,14 +99,14 @@ def locked_store(save: bool = True):
 
 
 def is_future(d: dict) -> bool:
-    """还没过。没写具体时间的，截止当天一整天都算没过。"""
+    """Return whether a deadline has not passed; date-only deadlines remain valid all day."""
     if d.get("time_known", True):
         return d["due"] >= now().isoformat(timespec="minutes")
     return d["due"][:10] >= now().date().isoformat()
 
 
 def upcoming(store: list[dict]) -> list[dict]:
-    """还没到期、也没标记为"交了/删掉"（done）的。"""
+    """Return deadlines that have not passed and are not marked done."""
     return [d for d in store if is_future(d) and not d.get("done")]
 
 
@@ -139,7 +129,7 @@ def days_left(d: dict) -> str:
     return tr("il.one_day_left") if days == 1 else tr("il.days_left", n=days)
 
 
-# ---------------------------------------------------------------- 登录 ILIAS
+# ---------------------------------------------------------------- ILIAS login
 
 class Ilias:
     def __init__(self, user: str, password: str):
@@ -195,11 +185,11 @@ class Ilias:
         return self.main(f"{ILIAS}/goto.php/{kind}/{ref}")
 
     def main(self, url: str) -> str:
-        """打开一个页面，只返回正文部分（<main>）。"""
+        """Open a page and return only its main-content element."""
         if self.pages >= MAX_PAGES:
             raise RuntimeError(tr("il.too_many_pages", n=MAX_PAGES))
         self.pages += 1
-        time.sleep(0.4)                       # 对服务器客气一点
+        time.sleep(0.4)                       # Avoid overloading the server.
         _, page = self.get(url)
         m = re.search(r"<main[^>]*>(.*)</main>", page, re.S)
         body = m.group(1) if m else page
@@ -219,7 +209,7 @@ class Ilias:
         return re.sub(r"\s+", " ", out).strip()[:PDF_CHARS]
 
 
-# ---------------------------------------------------------------- 1. iCal（0 token）
+# ---------------------------------------------------------------- 1. iCal (zero tokens)
 
 def ical_deadlines(url: str) -> list[dict]:
     req = urllib.request.Request(url, headers={"User-Agent": UA})
@@ -251,7 +241,7 @@ def ical_deadlines(url: str) -> list[dict]:
     return found
 
 
-# ---------------------------------------------------------------- 2+3. 抓取课程，挑出新内容（0 token）
+# ---------------------------------------------------------------- 2–3. Crawl courses and identify new content (zero tokens)
 
 OBJ_LINK = re.compile(r'<a[^>]*href="(?:https://ilias\.studium\.kit\.edu/)?goto\.php/'
                       r'(fold|grp|itgr|exc)/(\d+)[^"]*"[^>]*>(.*?)</a>', re.S)
@@ -274,8 +264,10 @@ def segments(body: str) -> list[str]:
 def crawl(il: Ilias, course: dict, seen: dict, skip_folders: re.Pattern | None,
           exc_course: dict, forums: dict,
           published: set | None = None) -> tuple[list[dict], list[dict]]:
-    """返回 (新出现的带日期文字, 新的作业 PDF)。seen 会被更新。
-    published：这门课在 ILIAS 里真的出现过的作业编号（文件名 / 练习名里的编号）。"""
+    """Return newly seen dated text and assignment PDFs; update seen.
+
+    published contains assignment numbers that actually appear in ILIAS file or exercise names.
+    """
     name, crs = course["name"], str(course["crs"])
     groups = {str(g) for g in course.get("groups", [])}
     read_pages = course.get("read_pages", True)
@@ -286,7 +278,7 @@ def crawl(il: Ilias, course: dict, seen: dict, skip_folders: re.Pattern | None,
         body = il.page(kind, ref)
         if kind == "exc":
             exc_course[ref] = name
-        # 新出现的、带日期的文字
+        # Newly seen text that contains a date.
         if read_pages:
             segs = segments(body)
             for i, seg in enumerate(segs):
@@ -298,7 +290,7 @@ def crawl(il: Ilias, course: dict, seen: dict, skip_folders: re.Pattern | None,
                     ctx = segs[i - 1] if i > 0 else ""
                     texts.append({"course": name, "where": path,
                                   "text": (ctx[:150] + " … " if ctx else "") + seg})
-        # 新文件：文件名或所在文件夹名像作业的才读 PDF（读完才记为"看过"，见 main）
+        # New files: read PDFs only when their name or folder resembles an assignment; main marks them seen after reading.
         folder = path.rsplit(" › ", 1)[-1]
         for fref, label in FILE_LINK.findall(body):
             label = text_of(label)
@@ -312,8 +304,8 @@ def crawl(il: Ilias, course: dict, seen: dict, skip_folders: re.Pattern | None,
                     pdfs.append({"course": name, "where": full, "ref": fref})
             else:
                 seen[f"file:{fref}"] = 1
-        # 往下走：文件夹、分组块、练习、自己的 Tutorium
-        # 记下论坛（每天总结一次，见 forums.py）
+        # Descend into folders, group blocks, exercises, and the user's Tutorium.
+        # Record forums for the daily summary; see forums.py.
         for fref, label in FORUM_LINK.findall(body):
             label = text_of(label)
             if label and fref not in forums:
@@ -333,7 +325,7 @@ def crawl(il: Ilias, course: dict, seen: dict, skip_folders: re.Pattern | None,
     return texts, pdfs
 
 
-# ---------------------------------------------------------------- 4. AI 提取截止时间（花 token）
+# ---------------------------------------------------------------- 4. AI deadline extraction (uses tokens)
 
 PROMPT = """你帮一个 KIT 学生从 ILIAS 课程内容里找出他要遵守的截止时间。今天是 {today}。
 只提取需要他行动的：作业/练习提交（Abgabe）、考试（Klausur）、报名或注册截止、报告材料提交。
@@ -395,20 +387,41 @@ def llm_extract(items: list[dict], llm: dict) -> tuple[list[dict], int]:
     return results, tokens
 
 
-# ---------------------------------------------------------------- 5. 合并
+# ---------------------------------------------------------------- 5. Merge
+
+def _title_key(title: str) -> str:
+    return " ".join(title.casefold().split())
+
+
+def same_deadline_title(item: dict, title: str) -> bool:
+    key = _title_key(title)
+    return any(_title_key(t) == key for t in (item["title"], *item.get("title_aliases", [])))
+
+
+def find_deadline(store: list[dict], item: dict) -> dict | None:
+    """Find by course, date, and title while preserving recognition of manual rescheduling and renaming."""
+    day = item["due"][:10]
+    previous = None
+    for entry in store:
+        if entry["course"] != item["course"] or not same_deadline_title(entry, item["title"]):
+            continue
+        if entry["due"][:10] == day:
+            return entry
+        if previous is None and day in entry.get("aliases", []):
+            previous = entry
+    return previous
+
 
 def merge(store: list[dict], new: list[dict]) -> list[dict]:
-    """同一门课、同一天的截止时间算同一个；新的带具体时间就补上。返回真正新增的。"""
+    """Merge duplicate deadlines and return newly added items."""
     added = []
     for d in new:
         if not d.get("title"):
             continue
         day = d["due"][:10]
-        # aliases：在机器人里改过日期的，旧日期也算同一个（不会又加回来）
-        same = next((x for x in store if x["course"] == d["course"]
-                     and (x["due"][:10] == day or day in x.get("aliases", []))), None)
+        same = find_deadline(store, d)
         if same:
-            if d.get("time_known") and not same.get("time_known"):
+            if same["due"][:10] == day and d.get("time_known") and not same.get("time_known"):
                 same["due"], same["time_known"] = d["due"], True
             if d.get("release") and not same.get("release"):
                 same["release"] = d["release"]
@@ -429,7 +442,7 @@ def format_list(items: list[dict], header: str) -> str:
     return "\n".join(lines)
 
 
-# ---------------------------------------------------------------- 主流程
+# ---------------------------------------------------------------- Main flow
 
 def main() -> int:
     ap = argparse.ArgumentParser()
@@ -460,14 +473,14 @@ def main() -> int:
 
     # 1. iCal
     try:
-        # 没填 iCal 链接（安装向导里可以跳过）：安静地跳过，不算错误
+        # An iCal URL is optional in the setup wizard; skip it silently when absent.
         url = os.environ.get(icfg.get("ical_url_env") or "", "").strip()
         candidates_ical = ical_deadlines(url) if url else []
     except Exception as e:
         candidates_ical = []
         errors.append(tr("il.ical_failed", err=e))
 
-    # 2+3. 登录 + 抓取
+    # 2–3. Login and crawl
     texts, pdfs, forums = [], [], {}
     forum_msg, forum_tokens = "", 0
     try:
@@ -477,14 +490,14 @@ def main() -> int:
             try:
                 pub = set(state.setdefault("published", {}).get(course["name"], []))
                 t, p = crawl(il, course, state["seen"], skip, state["exc_course"], forums, pub)
-                state["published"][course["name"]] = sorted(pub)    # 只会增加（发布过就算发布了）
+                state["published"][course["name"]] = sorted(pub)    # Only grows: once published, always considered published.
                 texts += t
                 pdfs += p
             except Exception as e:
                 errors.append(tr("il.named_err", name=course["name"], err=e))
         n_texts = len(texts)
         if forums:
-            state["forums"] = forums          # 论坛列表：机器人追问论坛时用
+            state["forums"] = forums          # Forum list for bot follow-up questions.
         for p in pdfs[:MAX_PDFS]:
             try:
                 txt = il.pdf_text(p["ref"])
@@ -496,7 +509,7 @@ def main() -> int:
                 texts.append({"course": p["course"], "where": p["where"], "text": txt})
         if len(pdfs) > MAX_PDFS:
             print(f"新 PDF 有 {len(pdfs)} 个，这次只读了 {MAX_PDFS} 个，其余下次再读")
-        # iCal 里的练习（exc）属于哪门课：不知道的就打开看一下面包屑
+        # For unknown course ownership of iCal exercises, open the page and inspect its breadcrumb.
         crs_ids = {str(c["crs"]) for c in icfg["courses"]}
         for d in candidates_ical:
             kind, _, ref = d["obj"].partition("/")
@@ -506,7 +519,7 @@ def main() -> int:
                 if found_crs:
                     state["exc_course"][ref] = next(c["name"] for c in icfg["courses"]
                                                     if str(c["crs"]) == found_crs[0])
-        # 论坛：每天只在 forum_hour 那次（默认 19 点，跟 19:30 的邮件检查一起）
+        # Forums run only at forum_hour daily (default 19:00, alongside the 19:30 email check).
         if args.forums or now().hour == icfg.get("forum_hour", 19):
             try:
                 forum_msg, forum_tokens, ferr = forums_mod.run(il, forums, state, cfg["llm"],
@@ -520,7 +533,7 @@ def main() -> int:
     except Exception as e:
         errors.append(tr("il.named_err", name="ILIAS", err=e))
 
-    # iCal 里的练习对应哪门课
+    # Map iCal exercises to their courses.
     names = {str(c["crs"]): c["name"] for c in icfg["courses"]}
     for d in candidates_ical:
         kind, _, ref = d.pop("obj").partition("/")
@@ -534,7 +547,7 @@ def main() -> int:
     except Exception as e:
         errors.append(tr("il.ai_failed", err=e))
 
-    # 手动添加的截止时间（config.toml 里的 [[ilias.manual]]）
+    # Manually added deadlines from [[ilias.manual]] in config.toml.
     for m in icfg.get("manual", []):
         t = str(m.get("time") or "")
         hh, mm = map(int, t.split(":")) if t else (0, 0)
@@ -544,13 +557,13 @@ def main() -> int:
                                               tzinfo=TZ).isoformat(timespec="minutes"),
                            "time_known": bool(t)})
 
-    # 只要以后的
+    # Keep only future deadlines.
     candidates = [d for d in candidates if is_future(d)]
-    with locked_store(save=not args.dry_run) as store:   # 合并时才加锁
+    with locked_store(save=not args.dry_run) as store:   # Lock only while merging.
         added = merge(store, candidates)
         future = upcoming(store)
 
-    # 推送：第一次运行（或重装后）列出全部，方便检查有没有漏；以后只发新出现的
+    # On first run or after reinstall, list all deadlines for checking; later send only new ones.
     msg = []
     if first_run:
         msg.append(format_list(future, tr("il.first", n=len(future))))
@@ -573,7 +586,7 @@ def main() -> int:
     if msg:
         send_telegram("\n\n".join(msg), cfg["telegram"])
     if forum_msg:
-        send_telegram(forum_msg, cfg["telegram"])          # 论坛总结单独一条
+        send_telegram(forum_msg, cfg["telegram"])          # Send the forum summary as a separate message.
     save_json(STATE_FILE, state)
     print(f"新增 {len(added)} 个截止时间，tokens={tokens}，错误 {len(errors)} 个")
     return 0

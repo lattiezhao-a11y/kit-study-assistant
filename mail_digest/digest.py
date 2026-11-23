@@ -1,13 +1,9 @@
 #!/usr/bin/env python3
-"""每日邮件分类摘要：只读、清洗后全部交给 LLM 批量分类。
+"""Read-only daily email digest that cleans messages and batch-classifies them with an LLM.
 
-用法:
-  python3 digest.py --dry-run --no-llm   只打印，不推送、不调 AI（第一次测试用）
-  python3 digest.py --dry-run            调 AI，但只打印不推送
-  python3 digest.py                      正式运行：分类并推送到 Telegram
-  python3 digest.py --since-days 3       没有进度记录时回看几天（默认看 config）
-
-只依赖 Python 3.11+ 标准库。
+Use --dry-run --no-llm to print without sending or using AI, --dry-run to use AI
+without sending, or --since-days to set the initial lookback period. Requires only
+the Python 3.11+ standard library.
 """
 from __future__ import annotations
 
@@ -16,7 +12,6 @@ import datetime as dt
 import email
 import email.policy
 import html
-import imaplib
 import json
 import os
 import re
@@ -28,16 +23,17 @@ from html.parser import HTMLParser
 from pathlib import Path
 
 import i18n
+import mail_imap
 from i18n import tr
 
 HERE = Path(__file__).resolve().parent
-# 数据文件夹：config.toml、.env 和所有 .json 都放在这里。
-# 默认就是代码所在的文件夹；Docker 里用环境变量 DATA_DIR=/data 把数据和代码分开。
+# Data directory for config.toml, .env, and all JSON files.
+# By default it is the source directory; Docker uses DATA_DIR=/data to separate data from code.
 DATA = Path(os.environ.get("DATA_DIR") or HERE).resolve()
-MAX_FULL_BYTES = 1_500_000  # 超过这个大小只读邮件头（多半是大附件）
-IGNORED_LIST_MAX = 60       # 摘要里最多逐封列出多少封被忽略的邮件
+MAX_FULL_BYTES = 1_500_000  # Above this size, read only email headers, usually to avoid large attachments.
+IGNORED_LIST_MAX = 60       # Maximum number of ignored messages listed individually in the digest.
 
-CATS = ("must", "job", "maybe", "ignore", "unknown")   # 显示的名字见 i18n.py 的 cat.*
+CATS = ("must", "job", "maybe", "ignore", "unknown")   # Display names are defined by i18n.py keys cat.*.
 
 
 @dataclass
@@ -46,23 +42,23 @@ class Mail:
     sender: str
     subject: str
     snippet: str
-    is_bulk: bool          # 带 List-Unsubscribe 头 = 群发（只作为给 AI 的参考）
+    is_bulk: bool          # A List-Unsubscribe header suggests bulk mail; this is only AI context.
     use_llm: bool
     cat: str = "unknown"
     summary: str = ""
     deadline: str = ""
-    time: str = ""         # 截止的具体时间 HH:MM（AI 看得出来才有）
-    course: str = ""       # 属于哪门课（AI 从课程列表里选）
-    replaces: str = ""     # 如果是推迟/改动了旧的截止日期：旧日期
-    kind: str = "duty"     # 截止日期是 "duty" 义务（不做有后果）还是 "chance" 机会（可做可不做）
-    reminder: str = ""     # "added" 已加入提醒 / "dup" 提醒里本来就有 / "chance" 机会，没加
+    time: str = ""         # Exact deadline time in HH:MM, when the AI can determine one.
+    course: str = ""       # Related course, selected by the AI from the configured course list.
+    replaces: str = ""     # Previous deadline date if this one postpones or changes it.
+    kind: str = "duty"     # “duty” has consequences if missed; “chance” is optional.
+    reminder: str = ""     # “added” was added, “dup” already exists, and “chance” is not added.
     by: str = ""           # "llm" / "safety-net"
 
 
-# ---------------------------------------------------------------- 配置与状态
+# ---------------------------------------------------------------- Configuration and state
 
 def load_env(path: Path) -> None:
-    """读取 .env（KEY=VALUE），不覆盖已存在的环境变量。"""
+    """Load KEY=VALUE entries from .env without overriding existing environment variables."""
     if not path.exists():
         return
     for line in path.read_text(encoding="utf-8").splitlines():
@@ -92,7 +88,7 @@ def save_state(path: Path, state: dict) -> None:
     tmp.replace(path)
 
 
-# ---------------------------------------------------------------- 邮件清洗
+# ---------------------------------------------------------------- Email cleanup
 
 class _HTMLText(HTMLParser):
     BLOCK = {"br", "p", "div", "tr", "li", "h1", "h2", "h3", "table"}
@@ -127,7 +123,7 @@ def html_to_text(s: str) -> str:
     return "".join(p.out)
 
 
-# 回复/转发里引用的旧内容从这些行开始，之后的都丢掉
+# Quoted content in replies and forwards starts at these lines and is discarded.
 QUOTE_START = re.compile(
     r"^\s*(On .{5,200}wrote:|Am .{5,200}schrieb.{0,40}:|"
     r"-{2,}\s*(Original Message|Ursprüngliche Nachricht|原始邮件)\s*-{2,})",
@@ -137,9 +133,9 @@ QUOTE_START = re.compile(
 
 def clean_text(text: str, limit: int) -> str:
     text = text.replace("\r\n", "\n")
-    text = re.split(r"\n-- ?\n", text, maxsplit=1)[0]          # 签名
+    text = re.split(r"\n-- ?\n", text, maxsplit=1)[0]          # Signature.
     m = QUOTE_START.search(text)
-    if m and m.start() > 20:                                     # 去掉引用的旧邮件
+    if m and m.start() > 20:                                     # Remove quoted earlier emails.
         text = text[: m.start()]
     lines = [ln for ln in text.split("\n") if not ln.lstrip().startswith(">")]
     text = " ".join(lines)
@@ -161,7 +157,7 @@ def body_text(msg) -> str:
         return ""
 
 
-# ---------------------------------------------------------------- IMAP 读取（只读）
+# ---------------------------------------------------------------- Read-only IMAP access
 
 _MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun",
            "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
@@ -184,11 +180,11 @@ def fetch_account(acc: dict, state: dict, since_days: int, max_n: int,
     st = state.get(name, {})
     if not acc.get("user") or not acc["user"].isascii():
         raise RuntimeError(tr("dg.user_not_set"))
-    secret(acc["password_env"])   # 先检查密码填了没有，再去连接
-    conn = imaplib.IMAP4_SSL(acc["host"], acc.get("port", 993), timeout=60)
+    secret(acc["password_env"])   # Validate that a password is configured before connecting.
+    conn = mail_imap.connect(acc["host"], acc.get("port", 993), timeout=60)
     try:
         conn.login(acc["user"], secret(acc["password_env"]))
-        typ, _ = conn.select(acc.get("folder", "INBOX"), readonly=True)  # 只读
+        typ, _ = conn.select(acc.get("folder", "INBOX"), readonly=True)  # Read-only mailbox selection.
         if typ != "OK":
             raise RuntimeError(tr("dg.folder", folder=acc.get("folder", "INBOX")))
         uidvalidity = int(conn.response("UIDVALIDITY")[1][0])
@@ -201,7 +197,7 @@ def fetch_account(acc: dict, state: dict, since_days: int, max_n: int,
             typ, data = conn.uid("SEARCH", None, f"SINCE {imap_date(since)}")
         uids = [int(u) for u in data[0].split()] if data and data[0] else []
         if last_uid:
-            uids = [u for u in uids if u > last_uid]   # "n:*" 总会带上最后一封
+            uids = [u for u in uids if u > last_uid]   # “n:*” always includes the final existing message.
         uids.sort()
         new_last = max(uids) if uids else (last_uid or 0)
         if len(uids) > max_n:
@@ -210,7 +206,7 @@ def fetch_account(acc: dict, state: dict, since_days: int, max_n: int,
 
         mails: list[Mail] = []
         for uid in uids:
-            # BODY.PEEK 不会把邮件标成已读
+            # BODY.PEEK does not mark an email as read.
             typ, data = conn.uid("FETCH", str(uid), "(RFC822.SIZE BODY.PEEK[HEADER])")
             meta, raw = _first_literal(data)
             m = re.search(rb"RFC822\.SIZE (\d+)", meta)
@@ -235,7 +231,7 @@ def fetch_account(acc: dict, state: dict, since_days: int, max_n: int,
             pass
 
 
-# ---------------------------------------------------------------- 安全网（只升级，不降级）
+# ---------------------------------------------------------------- Safety net (only raises priority)
 
 def _hit(text: str, patterns: list[str]) -> bool:
     t = text.lower()
@@ -243,13 +239,13 @@ def _hit(text: str, patterns: list[str]) -> bool:
 
 
 def apply_safety_net(mails: list[Mail], senders: list[str]) -> None:
-    """AI 分完之后：名单里的发件人至少是"必须处理"。永远不会把邮件往下调。"""
+    """After AI classification, listed senders are at least “action required”; priority is never lowered."""
     for m in mails:
         if m.cat != "must" and senders and _hit(m.sender, senders):
             m.cat, m.by = "must", "safety-net"
 
 
-# ---------------------------------------------------------------- LLM（批量）
+# ---------------------------------------------------------------- Batch LLM classification
 
 PROMPT = """你是邮件分类助手。关于我：
 {about_me}
@@ -292,7 +288,7 @@ def build_prompt(llm_cfg: dict, job_cfg: dict, courses: list[str] = ()) -> tuple
 
 def classify_llm(mails: list[Mail], cfg: dict, job_cfg: dict,
                  courses: list[str] = ()) -> tuple[int, str]:
-    """返回 (用掉的 token 数, 错误信息)。"""
+    """Return the number of tokens used and an error message."""
     todo = [m for m in mails if m.cat == "unknown" and m.use_llm]
     if not todo:
         return 0, ""
@@ -336,16 +332,16 @@ def classify_llm(mails: list[Mail], cfg: dict, job_cfg: dict,
                     m.course = str(res.get("course", "") or "") if res.get("course") in courses else ""
                     m.replaces = str(res.get("replaces", "") or "")[:10]
                     m.kind = "chance" if res.get("kind") == "chance" else "duty"
-        except Exception as e:  # 失败的留在“未分类”，摘要照发
+        except Exception as e:  # Leave failures unclassified and still send the digest.
             errors.append(tr("dg.ai_failed", err=f"{type(e).__name__}: {e}"))
     return tokens, "；".join(errors)
 
 
-# ---------------------------------------------------------------- 截止日期并进提醒
+# ---------------------------------------------------------------- Add deadlines to reminders
 
 def add_mail_deadlines(mails: list[Mail], save: bool) -> None:
-    """🔴/🟡 邮件里还没过的截止日期写进 deadlines.json（和 ILIAS 共用一张表）。"""
-    from ilias_sync import TZ, locked_store, merge   # 用到时才导入（ilias_sync 也导入了本文件）
+    """Write unexpired email deadlines to the deadlines.json store shared with ILIAS."""
+    from ilias_sync import TZ, locked_store, merge, same_deadline_title
     today = dt.date.today()
     todo = []
     for m in mails:
@@ -357,7 +353,7 @@ def add_mail_deadlines(mails: list[Mail], save: bool) -> None:
             continue
         if day < today:
             continue
-        if m.kind == "chance":            # 机会（可做可不做）：只在摘要里显示，不加提醒
+        if m.kind == "chance":            # Optional opportunity: show it only in the digest, not in reminders.
             m.reminder = "chance"
             continue
         known =bool(re.fullmatch(r"\d{1,2}:\d{2}", m.time))
@@ -373,20 +369,22 @@ def add_mail_deadlines(mails: list[Mail], save: bool) -> None:
         return
     with locked_store(save=save) as store:
         for m, d in todo:
-            if m.replaces and m.replaces != d["due"][:10]:     # 推迟了：旧的那个划掉
-                for x in store:
-                    if (x["course"] == d["course"] and x["due"][:10] == m.replaces
-                            and not x.get("done")):
-                        x["done"], x["replaced_by"] = True, d["due"]
-            # 看不出是哪门课，但日期和时间跟已有的完全一样 → 算同一个
+            if m.replaces and m.replaces != d["due"][:10]:
+                old = [x for x in store if x["course"] == d["course"]
+                       and x["due"][:10] == m.replaces and same_deadline_title(x, d["title"])]
+                if len(old) == 1 and not old[0].get("done"):
+                    previous = old[0]
+                    previous["done"], previous["replaced_by"] = True, d["due"]
+            # When the course is unknown, require both an identical title and an exact deadline time for duplication.
             if not m.course and d["time_known"] and any(
-                    x["due"][:16] == d["due"][:16] and not x.get("done") for x in store):
+                    x.get("time_known") and x["due"][:16] == d["due"][:16]
+                    and not x.get("done") and same_deadline_title(x, d["title"]) for x in store):
                 m.reminder = "dup"
                 continue
             m.reminder = "added" if merge(store, [d]) else "dup"
 
 
-# ---------------------------------------------------------------- 摘要与推送
+# ---------------------------------------------------------------- Digest and delivery
 
 def short_sender(s: str) -> str:
     name, _, addr = s.rpartition("<")
@@ -403,7 +401,7 @@ def build_digest(mails: list[Mail], errors: list[str], tokens: int) -> str:
             continue
         lines.append(tr("dg.group", cat=tr(f"cat.{cat}"), n=len(group)))
         for m in group:
-            # 每封三行：发件人 / 原标题（方便在邮箱里找）/ 一句摘要 + 截止日期
+            # Three lines per email: sender, original subject, then short summary and deadline.
             subj = m.subject if len(m.subject) <= 70 else m.subject[:70] + "…"
             dl = (f" ⏰{i18n.date_text(m.deadline)}{' ' + m.time if m.time else ''}"
                   if m.deadline else "")
@@ -419,7 +417,7 @@ def build_digest(mails: list[Mail], errors: list[str], tokens: int) -> str:
                 lines.append(f"   → {html.escape(m.summary)}{dl}")
     ignored = [m for m in mails if m.cat == "ignore"]
     if ignored:
-        # 被忽略的逐封列出（只列标题），方便一眼检查有没有误杀
+        # List ignored messages individually by subject so misclassifications can be spotted quickly.
         lines.append(tr("dg.ignored_head", cat=tr("cat.ignore"), n=len(ignored)))
         for m in ignored[:IGNORED_LIST_MAX]:
             subj = m.subject if len(m.subject) <= 50 else m.subject[:50] + "…"
@@ -439,7 +437,7 @@ def send_telegram(text: str, cfg: dict) -> None:
     chat_id = secret(cfg["chat_id_env"])
     url = f"https://api.telegram.org/bot{token}/sendMessage"
     chunks, cur = [], ""
-    for line in text.split("\n"):           # Telegram 单条上限 4096 字符
+    for line in text.split("\n"):           # Telegram limits a single message to 4096 characters.
         if len(cur) + len(line) + 1 > 3800:
             chunks.append(cur)
             cur = ""
@@ -456,7 +454,7 @@ def send_telegram(text: str, cfg: dict) -> None:
                 raise RuntimeError("Telegram 推送失败")
 
 
-# ---------------------------------------------------------------- 主流程
+# ---------------------------------------------------------------- Main flow
 
 def main() -> int:
     ap = argparse.ArgumentParser(description="每日邮件分类摘要")
@@ -514,7 +512,7 @@ def main() -> int:
         return 0
 
     send_telegram(digest, cfg["telegram"])
-    save_state(state_path, state)   # 推送成功后才记录进度，失败下次会重发
+    save_state(state_path, state)   # Record progress only after a successful send, so failures are retried.
     return 0
 
 

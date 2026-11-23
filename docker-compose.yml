@@ -1,13 +1,13 @@
-# 启动：docker compose up -d --build      看日志：docker compose logs -f
-# 数据都在旁边的 data/ 文件夹里：config.toml、.env，以及程序自己生成的 *.json
+# Start: docker compose up -d --build      Logs: docker compose logs -f
+# All data lives in the data/ folder next to this file: config.toml, .env and the *.json files the program creates
 services:
   assistant:
     build: .
     container_name: kit-study-assistant
     restart: unless-stopped
-    init: true                       # 让 docker stop 能马上停下来
-    user: "${PUID:-1000}:${PGID:-1000}"   # 用 data/ 文件夹主人的身份运行（id -u / id -g）
+    init: true                       # lets docker stop shut down right away
+    user: "${PUID:-1000}:${PGID:-1000}"   # run as the owner of the data/ folder (id -u / id -g)
     volumes:
       - ./data:/data
-    # 只想要提醒、不要聊天机器人：把下一行前面的 # 去掉
+    # Reminders only, no chat bot: remove the # in front of the next line
     # command: ["python3", "scheduler.py", "--no-bot"]

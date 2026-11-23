@@ -1,4 +1,4 @@
-# 只把代码放进镜像，密码和数据一律不进
+# Only code goes into the image; never passwords or data
 **/.env
 **/config.toml
 **/*.json

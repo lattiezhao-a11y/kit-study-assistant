@@ -6,7 +6,7 @@
 
 **Ein Telegram-Chat für alles, was du im Studium am KIT im Blick behalten musst.**
 
-Ein selbst gehosteter KI-Assistent: Er liest deine Postfächer, deine ILIAS-Kurse und ihre Foren und hält Fristen, To-dos und Stundenplan an einem Ort zusammen.
+Ein selbst gehosteter Telegram-Bot mit KI: Er liest deine Postfächer, deine ILIAS-Kurse und ihre Foren und hält Fristen, To-dos und Stundenplan an einem Ort zusammen.
 Er meldet sich nur, wenn etwas dich betrifft, und zur richtigen Zeit. Du kannst ihn auch ganz normal fragen.
 Er läuft auf einem Raspberry Pi oder einem beliebigen kleinen Server (Docker) und spricht Deutsch oder Chinesisch.
 
@@ -36,7 +36,7 @@ Im Studium am KIT ist alles, was du im Blick behalten musst, über viele Orte ve
 
 Mit nur diesem Bot siehst du alle wichtigen Termine deines Studiums.
 
-## Ein Tag mit dem Assistenten
+## Ein Tag mit dem Bot
 
 | Wann | Was in Telegram ankommt |
 |---|---|

@@ -1,5 +1,5 @@
-# 每次推送：构建 Docker 镜像，在里面跑不需要账号的测试，再试着启动、停止一次。
-# 只用示例配置，不需要任何密码，也不花 token。
+# On every push: build the Docker image, run the tests that need no account inside it, then start and stop it once.
+# Uses the example config only: no passwords, no tokens.
 name: Docker build & tests
 
 on:
@@ -39,10 +39,10 @@ jobs:
           docker compose up -d
           sleep 15
           docker compose logs
-          docker compose logs | grep -q "调度器启动"
-          test -f data/scheduler_state.json        # 能往 data/ 里写文件（权限正确）
+          docker compose logs | grep -q "Scheduler started"
+          test -f data/scheduler_state.json        # can write to data/ (permissions are right)
           start=$(date +%s)
           docker compose down
           took=$(( $(date +%s) - start ))
           echo "stopping took ${took}s"
-          test "$took" -lt 10                      # 收到停止信号后马上停下
+          test "$took" -lt 10                      # stops right after the stop signal

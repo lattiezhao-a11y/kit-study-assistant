@@ -1,10 +1,10 @@
-# 密码和个人配置（只在树莓派上）
+# Passwords and personal settings (only on the device that runs it)
 .env
 config.toml
 config.toml.bak*
 *.bak
 
-# 运行时数据（只在树莓派上）
+# Runtime data (only on the device that runs it)
 mail_digest/state.json
 mail_digest/state.tmp
 mail_digest/deadlines.json
@@ -17,16 +17,16 @@ mail_digest/*.tmp
 mail_digest/backup/
 mail_digest/scheduler_state.json
 
-# Docker 的数据文件夹（里面是 config.toml、.env 和运行数据）
+# Docker data folder (config.toml, .env and runtime data)
 data/
 
-# 个人笔记：只留在本地，对外的说明写在 README 里
+# Personal notes stay local; public documentation is in the README
 PLAN.md
 CLAUDE.md
 AGENTS.md
 .claude/
 
-# 编辑器和 Python 缓存
+# Editor and Python caches
 __pycache__/
 .vscode/
 .idea/

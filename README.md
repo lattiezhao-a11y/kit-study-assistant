@@ -6,7 +6,7 @@
 
 **One Telegram chat for everything a KIT student has to keep track of.**
 
-A self-hosted AI assistant that reads your inboxes, your ILIAS courses and their forums, and keeps your deadlines, to-dos and timetable in one place.
+A self-hosted Telegram bot, powered by an LLM, that reads your inboxes, your ILIAS courses and their forums, and keeps your deadlines, to-dos and timetable in one place.
 It tells you only what needs you, at the right time, and you can ask it anything in plain language.
 It runs on a Raspberry Pi or any small server (Docker) and speaks Chinese or German.
 
@@ -36,7 +36,7 @@ Studying at KIT, the things you have to keep track of are spread over many place
 
 With just this bot, you see every important date of your studies.
 
-## A day with the assistant
+## A day with the bot
 
 | When | What arrives in Telegram |
 |---|---|

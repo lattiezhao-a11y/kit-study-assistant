@@ -14,12 +14,12 @@ model = "deepseek-flash"                # Use deepseek-flash for every task.
 api_key_env = "DEEPSEEK_API_KEY"
 batch_size = 40                         # Maximum number of emails classified in one request.
 # Tell the AI who you are and what matters to you. Shorter text uses fewer tokens.
-about_me = "我是 KIT（卡尔斯鲁厄理工学院）的学生。课程、考试、作业截止、注册缴费、签证居留、银行、住房相关的邮件对我重要。"
+about_me = "I am a student at KIT (Karlsruhe Institute of Technology). Emails about courses, exams, homework deadlines, re-registration fees, visa and residence permit, banking and housing matter to me."
 # Always classify these emails as “ignored”. They remain in the mailbox and are listed at the end of the digest.
 always_ignore = [
-  "账号安全提醒：新设备登录、密码修改、两步验证、安全警告等（Google、Microsoft 等任何服务）",
-  "验证码、登录链接、邮箱地址验证（任何 App 或网站，例如 Typeless）",
-  "订阅类：newsletter、营销订阅、订阅确认、订阅续费提醒。注意：课程、ILIAS、KIT 学校和院系的邮件列表不算订阅，照常判断",
+  "Account security alerts: new device sign-ins, password changes, 2-step verification, security warnings (Google, Microsoft or any other service)",
+  "Verification codes, sign-in links, email address confirmations (any app or website)",
+  "Subscriptions: newsletters, marketing, subscription confirmations, renewal reminders. Note: course, ILIAS, KIT and department mailing lists are not subscriptions; judge them normally",
 ]
 
 [job]
@@ -52,7 +52,7 @@ llm = true                   # false means messages from this mailbox are not se
 name = "Gmail"
 host = "imap.gmail.com"
 port = 993
-user = "你的地址@gmail.com"
+user = "your.address@gmail.com"
 password_env = "GMAIL_APP_PASSWORD"   # An app password, not your Gmail sign-in password.
 folder = "INBOX"
 llm = true

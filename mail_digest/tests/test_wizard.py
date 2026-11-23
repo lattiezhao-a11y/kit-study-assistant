@@ -145,7 +145,7 @@ def part_pieces() -> None:
               and [x["name"] for x in cfg["accounts"]] == ["KIT", "Gmail"]
               and cfg["accounts"][1]["user"] == "me@gmail.com"
               and cfg["llm"]["about_me"] == a["about_me"]
-              and cfg["llm"]["always_ignore"] == example["llm"]["always_ignore"]
+              and cfg["llm"]["always_ignore"] == wiz.tr("cfg.ignore_rules").split("\n")
               and cfg["ilias"]["skip_folders"] == example["ilias"]["skip_folders"]
               and cfg["ilias"]["courses"] == a["courses"]
               and cfg["telegram"]["chat_id_env"] == "TELEGRAM_CHAT_ID")

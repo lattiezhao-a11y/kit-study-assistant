@@ -50,7 +50,7 @@ def latest_slot(job: dict, now: dt.datetime) -> dt.datetime:
             t = dt.datetime.combine(day, dt.time(h, job["minute"]), tzinfo=now.tzinfo)
             if t <= now:
                 return t
-    raise ValueError("时间表是空的")
+    raise ValueError("The timetable is empty")
 
 
 def next_slot(job: dict, now: dt.datetime) -> dt.datetime:
@@ -61,7 +61,7 @@ def next_slot(job: dict, now: dt.datetime) -> dt.datetime:
             t = dt.datetime.combine(day, dt.time(h, job["minute"]), tzinfo=now.tzinfo)
             if t > now:
                 return t
-    raise ValueError("时间表是空的")
+    raise ValueError("The timetable is empty")
 
 
 def due(job: dict, now: dt.datetime, last: dt.datetime | None) -> dt.datetime | None:
@@ -107,19 +107,19 @@ class Runner:
         for cmd in JOBS[name]["cmds"]:
             if self.stopping.is_set():
                 return
-            log(f"{name}: 开始 {' '.join(cmd)}")
+            log(f"{name}: start {' '.join(cmd)}")
             p = subprocess.Popen([sys.executable, "-u", *cmd], cwd=HERE)
             with self.lock:
                 self.procs.add(p)
             code = p.wait()
             with self.lock:
                 self.procs.discard(p)
-            log(f"{name}: {cmd[0]} 结束（退出码 {code}）")
+            log(f"{name}: {cmd[0]} finished (exit code {code})")
 
     def start_job(self, name: str) -> bool:
         t = self.jobs.get(name)
         if t and t.is_alive():
-            log(f"{name}: 上一次还没跑完，这次跳过")
+            log(f"{name}: previous run still going, skipping this one")
             return False
         t = threading.Thread(target=self.run_job, args=(name,), daemon=True)
         self.jobs[name] = t
@@ -132,18 +132,18 @@ class Runner:
         if self.bot and self.bot.poll() is None:
             return                                    # Already running.
         if self.bot:                                  # The bot has just been found stopped.
-            log(f"bot: 退出了（退出码 {self.bot.returncode}），{BOT_RESTART_DELAY} 秒后重启")
+            log(f"bot: exited (exit code {self.bot.returncode}), restarting in {BOT_RESTART_DELAY} s")
             self.bot, self.bot_down_since = None, time.monotonic()
         if self.bot_down_since and time.monotonic() - self.bot_down_since < BOT_RESTART_DELAY:
             return
-        log("bot: 启动")
+        log("bot: starting")
         self.bot = subprocess.Popen([sys.executable, "-u", "bot.py"], cwd=HERE)
         self.bot_down_since = None
 
     def stop(self, *_args) -> None:
         if self.stopping.is_set():
             return
-        log("收到停止信号，正在关闭")
+        log("Stop signal received, shutting down")
         self.stopping.set()
         with self.lock:
             procs = list(self.procs)
@@ -158,7 +158,7 @@ class Runner:
             if name not in state:
                 state[name] = latest_slot(job, now)
         save_state(state)
-        log(f"调度器启动（数据文件夹 {DATA}），机器人：{'开' if self.with_bot else '关'}")
+        log(f"Scheduler started (data folder {DATA}), bot: {'on' if self.with_bot else 'off'}")
         while not self.stopping.is_set():
             self.check_bot()
             now = dt.datetime.now(TZ)
@@ -173,14 +173,14 @@ class Runner:
                 p.wait(timeout=10)
             except subprocess.TimeoutExpired:
                 p.kill()
-        log("已停止")
+        log("Stopped")
 
 
 def main() -> int:
-    ap = argparse.ArgumentParser(description="代替 systemd 的小调度器（Docker 用）")
-    ap.add_argument("--no-bot", action="store_true", help="不开聊天机器人，只跑定时任务")
-    ap.add_argument("--list", action="store_true", help="打印时间表然后退出")
-    ap.add_argument("--run", choices=sorted(JOBS), help="马上运行某个任务一次")
+    ap = argparse.ArgumentParser(description="Small scheduler that replaces systemd (for Docker)")
+    ap.add_argument("--no-bot", action="store_true", help="no chat bot, scheduled jobs only")
+    ap.add_argument("--list", action="store_true", help="print the timetable and exit")
+    ap.add_argument("--run", choices=sorted(JOBS), help="run one job once, right now")
     args = ap.parse_args()
     if hasattr(sys.stdout, "reconfigure"):
         sys.stdout.reconfigure(encoding="utf-8")
@@ -189,7 +189,7 @@ def main() -> int:
         now = dt.datetime.now(TZ)
         for name, job in JOBS.items():
             cmds = " → ".join(" ".join(c) for c in job["cmds"])
-            print(f"{name:8} {job['minute']:02d} 分，{job['hours']} 点  下次 "
+            print(f"{name:8} minute {job['minute']:02d}, hours {job['hours']}  next "
                   f"{next_slot(job, now):%m-%d %H:%M}  {cmds}")
         return 0
 

@@ -1,7 +1,7 @@
-# KIT Study Assistant：代码在 /app，数据（config.toml、.env、*.json）在 /data
+# KIT Study Assistant: code in /app, data (config.toml, .env, *.json) in /data
 FROM python:3.13-slim
 
-# pdftotext 读作业 PDF；tzdata 让时间按德国时区算
+# pdftotext reads exercise PDFs; tzdata keeps times in the German time zone
 RUN apt-get update \
  && apt-get install -y --no-install-recommends poppler-utils tzdata \
  && rm -rf /var/lib/apt/lists/*
@@ -14,7 +14,7 @@ ENV TZ=Europe/Berlin \
 WORKDIR /app
 COPY mail_digest/ /app/
 
-# 检查一遍：Python 文件都能编译，调度表能读出来
+# Sanity check: every Python file compiles and the timetable can be read
 RUN python3 -m py_compile /app/*.py && DATA_DIR=/tmp python3 /app/scheduler.py --list
 
 VOLUME /data

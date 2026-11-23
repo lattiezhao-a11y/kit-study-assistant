@@ -95,4 +95,4 @@ def send_telegram(text: str, cfg: dict, reply_markup: dict | None = None) -> Non
                                      headers={"Content-Type": "application/json"})
         with urllib.request.urlopen(req, timeout=30) as r:
             if not json.load(r).get("ok"):
-                raise RuntimeError("Telegram 推送失败")
+                raise RuntimeError("Telegram send failed")

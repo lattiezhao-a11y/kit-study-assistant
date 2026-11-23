@@ -126,10 +126,10 @@ def main() -> int:
                 save_todo_reminded(todos)
 
     if args.dry_run:
-        print(re.sub(r"<[^>]+>", "", text) or "（现在没有要发的提醒）")
-        print("\n[dry-run] 没有推送、没有保存")
+        print(re.sub(r"<[^>]+>", "", text) or "(no reminders to send right now)")
+        print("\n[dry-run] nothing sent, nothing saved")
     else:
-        print("已发送提醒" if text else "现在没有要发的提醒")
+        print("Reminder sent" if text else "No reminders to send right now")
     return 0
 
 

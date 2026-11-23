@@ -28,6 +28,9 @@ from html.parser import HTMLParser
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
+# 数据文件夹：config.toml、.env 和所有 .json 都放在这里。
+# 默认就是代码所在的文件夹；Docker 里用环境变量 DATA_DIR=/data 把数据和代码分开。
+DATA = Path(os.environ.get("DATA_DIR") or HERE).resolve()
 MAX_FULL_BYTES = 1_500_000  # 超过这个大小只读邮件头（多半是大附件）
 IGNORED_LIST_MAX = 60       # 摘要里最多逐封列出多少封被忽略的邮件
 
@@ -459,16 +462,16 @@ def send_telegram(text: str, cfg: dict) -> None:
 
 def main() -> int:
     ap = argparse.ArgumentParser(description="每日邮件分类摘要")
-    ap.add_argument("--config", default=str(HERE / "config.toml"))
+    ap.add_argument("--config", default=str(DATA / "config.toml"))
     ap.add_argument("--dry-run", action="store_true", help="只打印，不推送、不更新进度")
     ap.add_argument("--no-llm", action="store_true", help="不调用 AI")
     ap.add_argument("--since-days", type=int, help="没有进度记录时回看几天")
     args = ap.parse_args()
 
-    load_env(HERE / ".env")
+    load_env(DATA / ".env")
     cfg = tomllib.loads(Path(args.config).read_text(encoding="utf-8"))
     gen = cfg.get("general", {})
-    state_path = HERE / "state.json"
+    state_path = DATA / "state.json"
     state = load_state(state_path)
     since_days = args.since_days or gen.get("since_days", 1)
 

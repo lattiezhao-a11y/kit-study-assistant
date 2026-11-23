@@ -23,15 +23,15 @@ HERE = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(HERE))
 import digest  # noqa: E402
 
-digest.load_env(HERE / ".env")
+digest.load_env(digest.DATA / ".env")
 import bot  # noqa: E402
 import ilias_sync  # noqa: E402
 import tools  # noqa: E402
 
 TMP = Path(tempfile.mkdtemp(prefix="bottest-"))
 for f in ("deadlines.json", "config.toml", "ilias_state.json"):
-    if (HERE / f).exists():
-        shutil.copy2(HERE / f, TMP / f)
+    if (digest.DATA / f).exists():
+        shutil.copy2(digest.DATA / f, TMP / f)
 ilias_sync.DEADLINES_FILE = TMP / "deadlines.json"
 ilias_sync.LOCK_FILE = TMP / "deadlines.lock"
 ilias_sync.STATE_FILE = TMP / "ilias_state.json"
@@ -110,6 +110,98 @@ def part_format() -> None:
     check("长消息按行切开，每段都不超长、格式完整",
           len(parts) > 1 and all(len(bot.md_to_html(x)) < 4096 and valid_html(bot.md_to_html(x))
                                  for x in parts))
+
+
+# ================================================================ Telegram 连接（只调用 getMe，不发消息）
+
+def part_net() -> None:
+    print("\n========== Telegram 连接（0 token，不发消息）==========")
+    import socket
+    import time as _t
+    tg = bot.Telegram(digest.secret(CFG["telegram"]["bot_token_env"]))
+    took = []
+    for _ in range(5):
+        t = _t.time()
+        tg.call("getMe", http_timeout=10)
+        took.append(_t.time() - t)
+    first = tg.local.conn.sock
+    tg.call("getMe", http_timeout=10)
+    check("连接一直保持，不用每次重新建", tg.local.conn.sock is first,
+          " ".join(f"{x:.2f}s" for x in took))
+    print("   5 次 getMe：" + " ".join(f"{x:.2f}s" for x in took))
+    tg.local.conn.sock.shutdown(socket.SHUT_RDWR)          # 模拟连接被对方关掉
+    try:
+        ok = tg.call("getMe", http_timeout=10).get("is_bot")
+    except Exception as e:
+        ok = repr(e)
+    check("连接被关掉后自动换新连接，照样成功", ok is True, str(ok))
+    old_host, old_tries = bot.TG_HOST, bot.CONNECT_TRIES
+    bot.TG_HOST, bot.CONNECT_TRIES = "10.255.255.1", 2      # 一个连不上的地址
+    t = _t.time()
+    try:
+        tg._drop()
+        tg.call("getMe")
+        err = None
+    except Exception as e:
+        err = e
+    spent = _t.time() - t
+    bot.TG_HOST, bot.CONNECT_TRIES = old_host, old_tries
+    check("「敲门」没反应时每次最多等 3 秒就放弃", isinstance(err, TimeoutError) and spent < 7.5,
+          f"{err!r}，用了 {spent:.1f}s")
+    tg._drop()
+
+
+# ================================================================ 数据文件夹 + 调度器（Docker 用，0 token）
+
+def part_scheduler() -> None:
+    print("\n========== 数据文件夹 + 调度器（0 token）==========")
+    import datetime as _dt
+    import os
+    import subprocess
+    import scheduler
+    import tempfile as _tf
+    # DATA_DIR：不设置时就是代码文件夹（树莓派），设置了就用它（Docker）
+    check("DATA_DIR 不设置 → 数据就在代码文件夹",
+          "DATA_DIR" in os.environ or digest.DATA == HERE.resolve(), str(digest.DATA))
+    with _tf.TemporaryDirectory() as d:
+        out = subprocess.run([sys.executable, "-c", "import digest, tools, ilias_sync, bot;"
+                              "print(digest.DATA, tools.TODO_FILE.parent, "
+                              "ilias_sync.DEADLINES_FILE.parent, bot.STATE_FILE.parent)"],
+                             cwd=HERE, env={**os.environ, "DATA_DIR": d},
+                             capture_output=True, text=True)
+        paths = out.stdout.split()
+        check("DATA_DIR 设置了 → 所有数据文件都在那里",
+              len(paths) == 4 and all(Path(p) == Path(d).resolve() for p in paths),
+              out.stdout + out.stderr[-300:])
+
+    tz = scheduler.TZ
+    J = scheduler.JOBS
+
+    def t(day: int, h: int, m: int, s: int = 0):
+        return _dt.datetime(2026, 11, day, h, m, s, tzinfo=tz)
+
+    due = scheduler.due
+    check("调度：07:30 到点 → 跑邮件", due(J["mail"], t(24, 7, 30, 10), t(24, 1, 30)) == t(24, 7, 30))
+    check("调度：同一个时间点不跑第二次", due(J["mail"], t(24, 7, 31), t(24, 7, 30)) is None)
+    check("调度：容器关了一夜 → 启动后补跑最近一次邮件",
+          due(J["mail"], t(24, 10, 0), t(23, 19, 30)) == t(24, 7, 30))
+    check("调度：第一次启动不补跑", due(J["mail"], t(24, 10, 0), None) is None)
+    check("调度：错过的 3 小时提醒不补发", due(J["remind"], t(24, 9, 20), t(24, 8, 5)) is None)
+    check("调度：09:05 发 3 小时提醒", due(J["remind"], t(24, 9, 5, 30), t(24, 8, 5)) == t(24, 9, 5))
+    check("调度：23:05 有提醒，00:05 没有",
+          due(J["remind"], t(24, 23, 5), t(24, 22, 5)) == t(24, 23, 5)
+          and due(J["remind"], t(25, 0, 5), t(24, 23, 5)) is None)
+    check("调度：07:00 早上汇总", due(J["morning"], t(24, 7, 0, 20), t(23, 7, 0)) == t(24, 7, 0))
+    check("调度：凌晨 01:30 的邮件检查跨天也算对",
+          scheduler.latest_slot(J["mail"], t(25, 0, 10)) == t(24, 19, 30)
+          and scheduler.next_slot(J["mail"], t(24, 20, 0)) == t(25, 1, 30))
+    timers = {f.stem: f.read_text(encoding="utf-8") for f in (HERE / "deploy").glob("*.timer")}
+    check("调度表和 deploy/*.timer 一致",
+          "01,07,13,19:30:00" in timers["mail-digest"] and "07..23:05:00" in timers["remind"]
+          and "07:00:00" in timers["morning-summary"]
+          and J["mail"]["hours"] == [1, 7, 13, 19] and J["mail"]["minute"] == 30
+          and J["remind"]["hours"] == list(range(7, 24)) and J["remind"]["minute"] == 5
+          and J["morning"]["hours"] == [7] and J["morning"]["minute"] == 0)
 
 
 # ================================================================ A：直接调用工具
@@ -416,7 +508,9 @@ if __name__ == "__main__":
         sys.stdout.reconfigure(encoding="utf-8")
     try:
         part_format()
+        part_scheduler()
         if "--format-only" not in sys.argv:
+            part_net()
             part_a()
             if "--no-llm" not in sys.argv:
                 part_b()

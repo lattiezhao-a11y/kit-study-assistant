@@ -39,14 +39,14 @@ from pathlib import Path
 from zoneinfo import ZoneInfo
 
 import forums as forums_mod
-from digest import load_env, secret, send_telegram
+from digest import DATA, load_env, secret, send_telegram
 
 HERE = Path(__file__).resolve().parent
 ILIAS = "https://ilias.studium.kit.edu"
 TZ = ZoneInfo("Europe/Berlin")
-STATE_FILE = HERE / "ilias_state.json"
-DEADLINES_FILE = HERE / "deadlines.json"
-LOCK_FILE = HERE / "deadlines.lock"
+STATE_FILE = DATA / "ilias_state.json"
+DEADLINES_FILE = DATA / "deadlines.json"
+LOCK_FILE = DATA / "deadlines.lock"
 UA = "Mozilla/5.0 (X11; Linux aarch64) ilias-deadline-sync"
 
 MAX_PAGES = 200          # 每次最多打开多少个页面（防止跑飞；论坛那次会多一些）
@@ -433,7 +433,7 @@ def format_list(items: list[dict], header: str) -> str:
 
 def main() -> int:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--config", default=str(HERE / "config.toml"))
+    ap.add_argument("--config", default=str(DATA / "config.toml"))
     ap.add_argument("--dry-run", action="store_true")
     ap.add_argument("--list", action="store_true")
     ap.add_argument("--forums", action="store_true", help="不管几点，都做论坛总结")
@@ -441,7 +441,7 @@ def main() -> int:
     if hasattr(sys.stdout, "reconfigure"):
         sys.stdout.reconfigure(encoding="utf-8")
 
-    load_env(HERE / ".env")
+    load_env(DATA / ".env")
     cfg = tomllib.loads(Path(args.config).read_text(encoding="utf-8"))
     icfg = cfg["ilias"]
 

@@ -1,0 +1,13 @@
+# 只把代码放进镜像，密码和数据一律不进
+**/.env
+**/config.toml
+**/*.json
+**/*.lock
+**/*.tmp
+**/*.bak*
+**/backup/
+**/__pycache__/
+data/
+.git/
+docs/
+*.md

@@ -18,8 +18,10 @@ from __future__ import annotations
 import argparse
 import datetime as dt
 import html
+import http.client
 import json
 import re
+import ssl
 import sys
 import threading
 import time
@@ -31,11 +33,11 @@ from pathlib import Path
 from zoneinfo import ZoneInfo
 
 import tools
-from digest import load_env, secret
+from digest import DATA, load_env, secret
 from tools import TOOLS
 
 HERE = Path(__file__).resolve().parent
-STATE_FILE = HERE / "bot_state.json"     # Telegram 读到哪条了 + 每天的 token 用量
+STATE_FILE = DATA / "bot_state.json"     # Telegram 读到哪条了 + 每天的 token 用量
 TZ = ZoneInfo("Europe/Berlin")
 IDLE_MINUTES = 60          # 闲置多久清空对话记忆
 MAX_HISTORY = 16           # 最多记住最近几条（你说的 + 它回的）
@@ -45,6 +47,10 @@ KEEP_TOOL_CHARS = 2500     # 工具结果在对话记忆里保留多少字（方
 CONFIRM_WORDS = {"确认", "/yes", "yes", "y", "是", "对", "好", "ok", "确定"}
 PENDING_MINUTES = 10       # 设置改动等你确认的时间
 MAX_BACKOFF = 30           # 断网时最多隔多久重试一次（网络恢复后最多 30 秒就能收到消息）
+TG_HOST = "api.telegram.org"
+CONNECT_TIMEOUT = 3        # 「敲门」最多等几秒，没反应就换个新连接重试
+CONNECT_TRIES = 3
+POLL_SECONDS = 10          # 每次等消息最多等几秒（连接悄悄断了的话，最多 POLL_SECONDS+5 秒就能发现）
 TYPING_EVERY = 4           # 「正在输入…」Telegram 只显示 5 秒，所以每 4 秒重发一次
 # deepseek-flash 价格（美元 / 百万 token），只用来估算花费；以 DeepSeek 官网为准
 PRICE_IN, PRICE_OUT = 0.30, 1.20
@@ -96,14 +102,55 @@ def usage_text(state: dict) -> str:
 # ---------------------------------------------------------------- Telegram
 
 class Telegram:
+    """跟 Telegram 的连接一直保持着（每个线程一条），不用每次都重新"敲门"（TCP + 加密握手）。
+    Wi-Fi 偶尔丢包时，"敲门"最容易卡住（系统按 1/2/4/8 秒重试，能卡 15 秒），所以：
+    敲门最多等 CONNECT_TIMEOUT 秒，没反应就马上换个新连接再敲（这时还没发内容，不会重复发消息）。"""
+
     def __init__(self, token: str):
-        self.base = f"https://api.telegram.org/bot{token}/"
+        self.path = f"/bot{token}/"
+        self.ctx = ssl.create_default_context()
+        self.local = threading.local()        # 主循环一条连接，「正在输入…」线程一条
+
+    def _connect(self) -> http.client.HTTPSConnection:
+        err: Exception | None = None
+        for _ in range(CONNECT_TRIES):
+            conn = http.client.HTTPSConnection(TG_HOST, timeout=CONNECT_TIMEOUT, context=self.ctx)
+            try:
+                conn.connect()
+                return conn
+            except OSError as e:
+                conn.close()
+                err = e
+        raise err
+
+    def _drop(self) -> None:
+        conn = getattr(self.local, "conn", None)
+        if conn:
+            conn.close()
+        self.local.conn = None
 
     def call(self, method: str, http_timeout: int = 30, **params):
-        req = urllib.request.Request(self.base + method, data=json.dumps(params).encode("utf-8"),
-                                     headers={"Content-Type": "application/json"})
-        with urllib.request.urlopen(req, timeout=http_timeout) as r:
-            data = json.load(r)
+        body = json.dumps(params).encode("utf-8")
+        for attempt in (1, 2):
+            conn = getattr(self.local, "conn", None)
+            reused = conn is not None and conn.sock is not None
+            if not reused:
+                self._drop()
+                conn = self.local.conn = self._connect()
+            try:
+                conn.sock.settimeout(http_timeout)
+                conn.request("POST", self.path + method, body, {"Content-Type": "application/json"})
+                data = json.loads(conn.getresponse().read())
+                break
+            except (ConnectionError, http.client.HTTPException) as e:
+                self._drop()
+                # 一直保持的连接被对方关掉了（闲置太久）：内容没送到，换新连接再发一次
+                if reused and attempt == 1 and not isinstance(e, http.client.IncompleteRead):
+                    continue
+                raise
+            except Exception:
+                self._drop()                  # 超时等：这条连接不要了，下次重新建
+                raise
         if not data.get("ok"):
             raise RuntimeError(f"Telegram {method} 失败：{data.get('description')}")
         return data["result"]
@@ -304,12 +351,12 @@ HELP = """我是你的学习助理 🤖
 
 def main() -> int:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--config", default=str(HERE / "config.toml"))
+    ap.add_argument("--config", default=str(DATA / "config.toml"))
     ap.add_argument("--tool", nargs=2, metavar=("NAME", "JSON_ARGS"), help="单独测试一个工具")
     args = ap.parse_args()
     if hasattr(sys.stdout, "reconfigure"):
         sys.stdout.reconfigure(encoding="utf-8")
-    load_env(HERE / ".env")
+    load_env(DATA / ".env")
     cfg = tomllib.loads(Path(args.config).read_text(encoding="utf-8"))
     tools.CFG.update(cfg)
     tools.CONFIG_PATH = Path(args.config)
@@ -329,14 +376,24 @@ def main() -> int:
     history: list[dict] = []
     last_active = now()
     backoff = 5
+    stalled = False                                  # 上一次是不是连接卡住了
     print(f"机器人已启动，工具 {len(TOOLS)} 个：{', '.join(TOOLS) or '无'}", flush=True)
 
     while True:
         try:
-            # 最多等 25 秒有没有新消息（太长的话 Wi-Fi 省电时连接会悄悄卡住，消息就晚到）
-            updates = tg.call("getUpdates", http_timeout=35, timeout=25,
+            # 每次最多等 POLL_SECONDS 秒有没有新消息，有消息 Telegram 会马上交过来
+            updates = tg.call("getUpdates", http_timeout=POLL_SECONDS + 5, timeout=POLL_SECONDS,
                               offset=state["offset"], allowed_updates=["message"])
-            backoff = 5
+            backoff, stalled = 5, False
+        except TimeoutError as e:
+            if not stalled:                          # 连接悄悄卡住了：马上换新连接，不用等
+                stalled = True
+                print(f"getUpdates 卡住了（{e}），马上重连", flush=True)
+                continue
+            print(f"getUpdates 又卡住了（{e}），{backoff} 秒后重试", flush=True)
+            time.sleep(backoff)
+            backoff = min(backoff * 2, MAX_BACKOFF)
+            continue
         except Exception as e:                       # 断网等：等一会儿再试
             print(f"getUpdates 出错：{e}，{backoff} 秒后重试", flush=True)
             time.sleep(backoff)

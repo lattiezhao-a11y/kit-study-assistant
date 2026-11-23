@@ -15,6 +15,10 @@ mail_digest/todos.json
 mail_digest/timetable.json
 mail_digest/*.tmp
 mail_digest/backup/
+mail_digest/scheduler_state.json
+
+# Docker 的数据文件夹（里面是 config.toml、.env 和运行数据）
+data/
 
 # 个人笔记：只留在本地，对外的说明写在 README 里
 PLAN.md

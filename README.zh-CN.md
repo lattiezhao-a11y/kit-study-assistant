@@ -1,8 +1,10 @@
 # KIT Study Assistant（KIT 学习助理）
 
+[![Docker build & tests](https://github.com/lattiezhao-a11y/kit-study-assistant/actions/workflows/docker.yml/badge.svg)](https://github.com/lattiezhao-a11y/kit-study-assistant/actions/workflows/docker.yml)
+
 [English](README.md) · **中文**
 
-一个给 KIT 学生用的轻量 AI 助理，自己部署，跑在树莓派上，通过 Telegram 跟你说话。
+一个给 KIT 学生用的轻量 AI 助理，自己部署，跑在树莓派或者任何一台小服务器上（支持 Docker），通过 Telegram 跟你说话。
 它会读你的学校邮件和 ILIAS，把所有截止时间找出来，在来不及之前提醒你。你也可以直接用中文问它问题。
 
 - **零依赖**：只用 Python 标准库，全部代码约 3000 行
@@ -73,11 +75,33 @@ AI 拿不准的时候放进"可以看看"，不放"忽略"。
 
 ## 安装
 
-需要准备：一台一直开着的 Linux 机器（我用的是树莓派 4 + Raspberry Pi OS Lite 64 位）、Python 3.11 以上、`poppler-utils`（读 PDF 用）、一个 Telegram 机器人（找 [@BotFather](https://t.me/BotFather) 创建），以及任何兼容 OpenAI 接口的 AI 服务的 API key（我用的是 DeepSeek）。
+只需要一台一直开着的电脑，不一定是树莓派：免费或便宜的云服务器、NAS、旧笔记本都可以。
+另外要准备一个 Telegram 机器人（找 [@BotFather](https://t.me/BotFather) 创建），以及任何兼容 OpenAI 接口的 AI 服务的 API key（我用的是 DeepSeek）。
+
+### 方式一：Docker（推荐，在哪儿都能用）
+
+```bash
+git clone https://github.com/lattiezhao-a11y/kit-study-assistant.git
+cd kit-study-assistant
+mkdir data
+cp mail_digest/config.example.toml data/config.toml
+cp mail_digest/.env.example data/.env && chmod 600 data/.env
+# 填好 data/.env 和 data/config.toml，然后：
+docker compose run --rm assistant python3 digest.py --dry-run   # 试运行，不发任何消息
+docker compose up -d                                            # 正式启动
+```
+
+📖 **详细教程，从一台空的云服务器到收到第一条 Telegram 消息：[docs/deploy-cloud.zh-CN.md](docs/deploy-cloud.zh-CN.md)**
+
+容器里用一个小调度器（`scheduler.py`）代替 systemd：时间表一样，机器人挂了自动重启，关机错过的邮件检查启动后会补一次。设置和数据都放在 `data/` 里，和代码分开。
+
+### 方式二：直接装在树莓派 / Linux 上（用 systemd）
+
+我自己就是这样用的。需要 Python 3.11 以上和 `poppler-utils`（读 PDF 用）。
 
 ```bash
 sudo apt install poppler-utils
-git clone https://github.com/<you>/kit-study-assistant.git
+git clone https://github.com/lattiezhao-a11y/kit-study-assistant.git
 cd kit-study-assistant/mail_digest
 
 cp .env.example .env && chmod 600 .env       # 密码、token、日历订阅链接
@@ -115,15 +139,17 @@ A 部分直接测每个工具。B 部分用约 20 句话测试 AI：有没有选
 
 - **ILIAS 登录只支持 KIT**（通过 `idp.scc.kit.edu`，不支持两步验证）。邮件部分任何 IMAP 邮箱都能用。
 - **机器人和所有消息都是中文**，提示词在代码里，想翻译也很容易。
-- **测试需要真实的 `config.toml` 和邮箱**，所以还没有自动测试（CI）。
+- **大部分测试需要真实的 `config.toml` 和邮箱**。GitHub 上的自动测试只负责构建 Docker 镜像，并跑不需要账号的那部分（格式、数据文件夹、调度器）。
 - **打开论坛讨论串，ILIAS 会把帖子标成已读**，这是 ILIAS 本身的规则。除此之外，程序在 ILIAS 里不改任何东西。
-- 只能在 Linux/macOS 上运行（用到了 `fcntl`）。
+- 不用 Docker 的话，只能在 Linux/macOS 上运行（用到了 `fcntl`）；Windows 用户请用 Docker。
 
 ## 计划
 
+- [x] Docker + 云服务器部署教程，没有树莓派也能用
 - [ ] ILIAS 网址和登录方式可以配置，让别的学校也能用
 - [ ] 安装向导（`setup.py`）：一问一答，生成 `config.toml` 和 `.env`
-- [ ] 不依赖真实数据的测试 + GitHub Actions
+- [x] GitHub 自动测试：构建 Docker 镜像 + 不需要账号的测试
+- [ ] 用假的邮箱和 ILIAS 页面做测试数据，让所有工具都能在 GitHub 上测
 - [ ] 截止时间提取的准确率评测
 - [ ] 可选本地模型（Ollama），数据完全不出本机
 

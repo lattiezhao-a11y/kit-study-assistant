@@ -1,8 +1,10 @@
 # KIT Study Assistant
 
+[![Docker build & tests](https://github.com/lattiezhao-a11y/kit-study-assistant/actions/workflows/docker.yml/badge.svg)](https://github.com/lattiezhao-a11y/kit-study-assistant/actions/workflows/docker.yml)
+
 **English** · [中文](README.zh-CN.md)
 
-A lightweight, self-hosted AI assistant for KIT students. It runs on a Raspberry Pi and talks to you through Telegram.
+A lightweight, self-hosted AI assistant for KIT students. It runs on a Raspberry Pi or any small server (Docker), and talks to you through Telegram.
 It reads your university email and ILIAS (KIT's learning platform), finds every deadline, and reminds you before it's too late.
 You can also ask it questions in plain language.
 
@@ -62,7 +64,7 @@ The bot has 19 tools:
 
 ```mermaid
 flowchart LR
-    subgraph Pi["Raspberry Pi (systemd timers)"]
+    subgraph Pi["Raspberry Pi / Docker (scheduled jobs)"]
         D[digest.py<br/>email → classify] --> S[(deadlines.json)]
         I[ilias_sync.py<br/>ILIAS → extract deadlines] --> S
         I --> F[forums.py<br/>forum digest]
@@ -112,11 +114,34 @@ If a mailbox or the LLM fails, the digest still goes out and says what broke. Un
 
 ## Setup
 
-You need: a Linux machine that is always on (I use a Raspberry Pi 4 with Raspberry Pi OS Lite 64-bit), Python 3.11+, `poppler-utils` (to read PDFs), a Telegram bot token from [@BotFather](https://t.me/BotFather), and an API key for any OpenAI-compatible LLM (I use DeepSeek).
+All you need is a computer that is always on. It doesn't have to be a Raspberry Pi: a free or cheap cloud server, a NAS or an old laptop works too.
+You also need a Telegram bot token from [@BotFather](https://t.me/BotFather) and an API key for any OpenAI-compatible LLM (I use DeepSeek).
+
+### Option 1: Docker (recommended, works anywhere)
+
+```bash
+git clone https://github.com/lattiezhao-a11y/kit-study-assistant.git
+cd kit-study-assistant
+mkdir data
+cp mail_digest/config.example.toml data/config.toml
+cp mail_digest/.env.example data/.env && chmod 600 data/.env
+# fill in data/.env and data/config.toml, then:
+docker compose run --rm assistant python3 digest.py --dry-run   # test, sends nothing
+docker compose up -d                                            # start
+```
+
+📖 **Step-by-step guide, from an empty cloud server to the first Telegram message: [docs/deploy-cloud.md](docs/deploy-cloud.md)**
+
+Inside the container, a small scheduler (`scheduler.py`) replaces systemd. It runs the same timetable, keeps the bot alive, and catches up a missed email check after a restart.
+Your settings and data live in `data/`, separate from the code.
+
+### Option 2: directly on a Raspberry Pi / Linux with systemd
+
+This is how I run it. You need Python 3.11+ and `poppler-utils` (to read PDFs).
 
 ```bash
 sudo apt install poppler-utils
-git clone https://github.com/<you>/kit-study-assistant.git
+git clone https://github.com/lattiezhao-a11y/kit-study-assistant.git
 cd kit-study-assistant/mail_digest
 
 cp .env.example .env && chmod 600 .env       # passwords, tokens, iCal link
@@ -154,15 +179,17 @@ Part A calls every tool directly. Part B sends about 20 natural-language request
 
 - **The ILIAS login works only for KIT** (Shibboleth via `idp.scc.kit.edu`, no 2FA), so the ILIAS part won't work at other universities yet. The email part works with any IMAP mailbox.
 - **The bot and all messages are in Chinese.** That's my language. The prompts live in the code and are easy to translate.
-- **The tests need a real `config.toml`** and mailbox access, so there is no CI yet.
+- **Most tests need a real `config.toml`** and mailbox access. GitHub Actions only builds the Docker image and runs the tests that need no account (formatting, data folder, scheduler).
 - **Opening forum threads marks them as read in ILIAS.** That is how ILIAS works. Nothing else is changed there.
-- Linux/macOS only (uses `fcntl`).
+- Without Docker it runs on Linux/macOS only (uses `fcntl`). On Windows, use Docker.
 
 ## Roadmap
 
+- [x] Docker image + cloud deployment guide, so no Raspberry Pi is needed
 - [ ] Configurable ILIAS instance and login, so other universities can use it
 - [ ] Interactive setup wizard (`setup.py`) to create `config.toml` and `.env`
-- [ ] Offline test fixtures + GitHub Actions
+- [x] GitHub Actions: build the Docker image + tests that need no account
+- [ ] Offline test fixtures (fake mailbox / ILIAS pages), so every tool can be tested on GitHub
 - [ ] Evaluation set for deadline extraction (precision / recall)
 - [ ] Optional local LLM (Ollama), so no data leaves the device
 

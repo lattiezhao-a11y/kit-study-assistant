@@ -27,15 +27,15 @@ from pathlib import Path
 
 import forums as forums_mod
 import ilias_sync
-from digest import QUOTE_START, body_text, imap_date, secret
+from digest import DATA, QUOTE_START, body_text, imap_date, secret
 
 HERE = Path(__file__).resolve().parent
 TZ = ilias_sync.TZ
 WEEKDAYS = "一二三四五六日"
-TODO_FILE = HERE / "todos.json"
-TIMETABLE_FILE = HERE / "timetable.json"
-CONFIG_PATH = HERE / "config.toml"
-BACKUP_DIR = HERE / "backup"
+TODO_FILE = DATA / "todos.json"
+TIMETABLE_FILE = DATA / "timetable.json"
+CONFIG_PATH = DATA / "config.toml"
+BACKUP_DIR = DATA / "backup"
 MAIL_DAYS = 7               # 邮件只看最近几天
 MAIL_LIST_MAX = 40          # 邮件列表最多列多少封
 MAIL_BODY_CHARS = 5000      # 一封邮件正文最多给 AI 多少字

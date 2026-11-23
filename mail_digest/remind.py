@@ -20,10 +20,10 @@ import sys
 import tomllib
 from pathlib import Path
 
-from digest import load_env, send_telegram
-from ilias_sync import HERE, TZ, WEEKDAYS, locked_store, now, save_json, upcoming
+from digest import DATA, load_env, send_telegram
+from ilias_sync import TZ, WEEKDAYS, locked_store, now, save_json, upcoming
 
-TODO_FILE = HERE / "todos.json"      # 机器人记的杂事待办：写了日期的也一起提醒
+TODO_FILE = DATA / "todos.json"      # 机器人记的杂事待办：写了日期的也一起提醒
 
 
 def todo_items() -> list[dict]:
@@ -104,14 +104,14 @@ def urgent(store: list[dict], quiet: list[int]) -> str:
 
 def main() -> int:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--config", default=str(HERE / "config.toml"))
+    ap.add_argument("--config", default=str(DATA / "config.toml"))
     ap.add_argument("--morning", action="store_true")
     ap.add_argument("--dry-run", action="store_true")
     args = ap.parse_args()
     if hasattr(sys.stdout, "reconfigure"):
         sys.stdout.reconfigure(encoding="utf-8")
 
-    load_env(HERE / ".env")
+    load_env(DATA / ".env")
     cfg = tomllib.loads(Path(args.config).read_text(encoding="utf-8"))
     quiet = cfg.get("ilias", {}).get("quiet_hours", [0, 7])
 

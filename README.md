@@ -2,11 +2,11 @@
 
 [![Docker build & tests](https://github.com/lattiezhao-a11y/kit-study-assistant/actions/workflows/docker.yml/badge.svg)](https://github.com/lattiezhao-a11y/kit-study-assistant/actions/workflows/docker.yml)
 
-**English** · [中文](README.zh-CN.md)
+**English** · [中文](README.zh-CN.md) · [Deutsch](README.de.md)
 
 A lightweight, self-hosted AI assistant for KIT students. It runs on a Raspberry Pi or any small server (Docker), and talks to you through Telegram.
 It reads your university email and ILIAS (KIT's learning platform), finds every deadline, and reminds you before it's too late.
-You can also ask it questions in plain language.
+You can also ask it questions in plain language. The bot speaks Chinese or German, your choice.
 
 - **Zero dependencies:** Python standard library only, about 3,000 lines in total
 - **Cheap:** if nothing changed, a run costs 0 tokens. One chat message costs about 500–3,000 tokens
@@ -41,7 +41,7 @@ Deadline bots usually target Canvas or Moodle, which have a proper API.
 
 | | Feature | When |
 |---|---|---|
-| 📬 | **Email digest:** classifies new mail from KIT and Gmail into *must act* / *maybe read* / *ignored*. Each email gets its original subject plus a one-line summary. Ignored emails are still listed, so you can spot mistakes | 01:30, 07:30, 13:30, 19:30 |
+| 📬 | **Email digest:** classifies new mail from KIT and Gmail into *must act* / *maybe read* / *ignored*. Each email gets its original subject plus a one-line summary in your language. Ignored emails are still listed, so you can spot mistakes | 01:30, 07:30, 13:30, 19:30 |
 | 📚 | **ILIAS deadline sync:** reads the iCal feed, course pages, folder names and new exercise PDFs. An LLM extracts the deadlines | same runs |
 | 🔁 | **Postponements:** if an email says a deadline moved, the old date is crossed out and the new one is added | same runs |
 | 💬 | **Forum digest:** one sentence per ILIAS forum thread with new posts | daily, 19:30 |
@@ -107,7 +107,7 @@ If a mailbox or the LLM fails, the digest still goes out and says what broke. Un
 
 **Safety.**
 - Mailboxes are opened read-only and fetched with `BODY.PEEK`, so mail is never marked as read. There is no SMTP code at all.
-- The LLM can only *propose* a settings change. The program applies it after you reply «确认» ("confirm"), and backs up the config first.
+- The LLM can only *propose* a settings change. The program applies it after you reply «确认» or «ja» ("confirm"), and backs up the config first.
 - Forum posts are sent to the LLM without names, only as "teacher/tutor" or "student".
 - Prompts tell the model to ignore instructions found inside emails. An invalid category from the model counts as *unclassified*.
 - All secrets live in `.env` (`chmod 600`). Nothing secret is in the code or the config.
@@ -128,7 +128,7 @@ docker compose run --rm assistant python3 digest.py --dry-run   # test, sends no
 docker compose up -d                                            # start
 ```
 
-📖 **Step-by-step guide, from an empty cloud server to the first Telegram message: [docs/deploy-cloud.md](docs/deploy-cloud.md)**
+📖 **Step-by-step guide, from an empty cloud server to the first Telegram message: [docs/deploy-cloud.md](docs/deploy-cloud.md)** ([中文](docs/deploy-cloud.zh-CN.md) · [Deutsch](docs/deploy-cloud.de.md))
 
 Inside the container, a small scheduler (`scheduler.py`) replaces systemd. It runs the same timetable, keeps the bot alive, and catches up a missed email check after a restart.
 Your settings and data live in `data/`, separate from the code.
@@ -164,7 +164,7 @@ The unit files assume the user `pi` and the path `/home/pi/mail_digest`. Edit th
 
 ### The setup wizard
 
-`setup.py` asks one question at a time and checks each answer right away:
+`setup.py` first asks for your language (Chinese or German), then asks one question at a time and checks each answer right away:
 
 - **KIT account:** logs in to ILIAS and the KIT mailbox (read-only), so a typo shows up immediately
 - **Courses:** **lists every course you joined on ILIAS**, grouped by semester, with this semester's courses pre-selected. Your Tutorium groups are matched to their courses automatically, so you never have to copy course IDs from URLs
@@ -180,7 +180,7 @@ To just look at your courses: `python3 ilias_courses.py`.
 ## Tests
 
 ```bash
-python3 tests/run_tests.py            # about 60 checks, about $0.05 of tokens
+python3 tests/run_tests.py            # 100+ checks, about $0.05 of tokens
 python3 tests/run_tests.py --no-llm   # tool tests only, 0 tokens
 python3 tests/test_setup.py           # setup wizard + course list, offline, 0 tokens
 ```
@@ -191,7 +191,7 @@ Part A calls every tool directly. Part B sends about 20 natural-language request
 ## Limitations
 
 - **The ILIAS login works only for KIT** (Shibboleth via `idp.scc.kit.edu`, no 2FA), so the ILIAS part won't work at other universities yet. The email part works with any IMAP mailbox.
-- **The bot and all messages are in Chinese.** That's my language. The prompts live in the code and are easy to translate.
+- **The bot, its messages and the setup wizard are in Chinese or German** (pick one in the wizard, or switch anytime with /language in Telegram). There is no English interface yet; all texts live in `i18n.py`, so adding a language is mostly translation.
 - **Most tests need a real `config.toml`** and mailbox access. GitHub Actions only builds the Docker image and runs the tests that need no account (formatting, data folder, scheduler, setup wizard).
 - **Opening forum threads marks them as read in ILIAS.** That is how ILIAS works. Nothing else is changed there.
 - Without Docker it runs on Linux/macOS only (uses `fcntl`). On Windows, use Docker.
@@ -201,7 +201,7 @@ Part A calls every tool directly. Part B sends about 20 natural-language request
 - [x] Docker image + cloud deployment guide, so no Raspberry Pi is needed
 - [ ] Configurable ILIAS instance and login, so other universities can use it
 - [x] Interactive setup wizard (`setup.py`) that lists your ILIAS courses and finds your Telegram chat ID
-- [ ] German version of the setup wizard
+- [x] German version (bot, messages, setup wizard)
 - [x] GitHub Actions: build the Docker image + tests that need no account
 - [ ] Offline test fixtures (fake mailbox / ILIAS pages), so every tool can be tested on GitHub
 - [ ] Evaluation set for deadline extraction (precision / recall)

@@ -10,6 +10,8 @@ from __future__ import annotations
 
 import datetime as dt
 import os
+import re
+import string
 import subprocess
 import sys
 import tempfile
@@ -19,6 +21,7 @@ from pathlib import Path
 
 HERE = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(HERE))
+import i18n  # noqa: E402
 import ilias_courses as ic  # noqa: E402
 import setup as wiz  # noqa: E402
 
@@ -259,10 +262,60 @@ def part_flow() -> None:
             check("中途退出，什么文件都不写", r.returncode == 1 and not list(Path(d2).iterdir()))
 
 
+CJK = re.compile(r"[一-鿿　-〿！-～]")    # 汉字和中文标点
+
+
+def part_german() -> None:
+    print("\n========== 德语版（每句话都有中文和德语；德语向导里没有中文）==========")
+    fields = lambda s: sorted(f for _, f, _, _ in string.Formatter().parse(s) if f)  # noqa: E731
+    bad = [k for k, v in i18n.TEXTS.items() if set(v) != {"zh", "de"} or fields(v["zh"]) != fields(v["de"])]
+    check("每句话都有中文和德语，占位符一样", not bad, str(bad))
+    bad = [k for k, v in i18n.TEXTS.items() if not k.startswith("ai.") and CJK.search(v["de"].replace("中文", ""))]
+    check("德语文字里没有中文", not bad, str(bad))
+    check("向导和课程列表的文字都在 i18n 里", any(k.startswith("su.") for k in i18n.TEXTS)
+          and all(f"ic.{k}" in i18n.TEXTS for k in ("head", "current", "lost")))
+
+    i18n.LANG = "de"
+    try:
+        items = ic.my_courses(FakeIlias(), look_up_all_groups=True, today=dt.date(2026, 11, 23))
+        out = ic.format_courses(items, {600001})
+        check("课程列表（德语）", out.startswith("WS 26/27 (dieses Semester)") and not CJK.search(out), out[:200])
+    finally:
+        i18n.LANG = "zh"
+
+    with tempfile.TemporaryDirectory() as d:
+        data = Path(d)
+        answers = ["2",                      # 语言：Deutsch
+                   "uabcd", "pw-SECRET-1", "600001", "LA II", "", "n",
+                   "", "", "sk-SECRET-2", "123:SECRET-3", "4242", ""]
+        r = run_wizard(data, answers)
+        cfg_path = data / "config.toml"
+        ok = r.returncode == 0 and cfg_path.exists()
+        check("德语向导跑完", ok, r.stdout[-800:] + r.stderr[-800:])
+        if not ok:
+            return
+        # 选语言那两行本来就是两种语言（"请选择语言 / …"、"1. 中文"），不算
+        shown = "\n".join(l for l in r.stdout.splitlines() if i18n.PICK not in l and "中文" not in l)
+        check("德语向导：问题都是德语，没有中文", "KIT-Konto" in shown and not CJK.search(shown),
+              str(CJK.findall(shown)[:10]) + shown[:300])
+        text = cfg_path.read_text(encoding="utf-8")
+        cfg = tomllib.loads(text)
+        check("德语向导：language = de，config.toml 里的注释、默认介绍、忽略规则都是德语",
+              cfg["general"]["language"] == "de" and "# Sprache:" in text and not CJK.search(text)
+              and cfg["llm"]["about_me"].startswith("Ich studiere") and len(cfg["llm"]["always_ignore"]) == 3,
+              str(CJK.findall(text)[:10]))
+        check("德语向导：.env 的说明也是德语", not CJK.search((data / ".env").read_text(encoding="utf-8")))
+        r = run_wizard(data, ["600001", ""], "--courses")
+        check("--courses：按 config 里的语言（德语）问", r.returncode == 0 and "Kurse aktualisiert" in r.stdout
+              and not CJK.search(r.stdout), r.stdout[-400:] + r.stderr[-400:])
+        r = run_wizard(data, ["3"])
+        check("已有德语配置：菜单也是德语", "Abbrechen" in r.stdout and r.returncode == 1, r.stdout[-300:])
+
+
 if __name__ == "__main__":
     if hasattr(sys.stdout, "reconfigure"):
         sys.stdout.reconfigure(encoding="utf-8")
-    for part in (part_courses, part_pieces, part_flow):
+    for part in (part_courses, part_pieces, part_flow, part_german):
         try:
             part()
         except Exception:

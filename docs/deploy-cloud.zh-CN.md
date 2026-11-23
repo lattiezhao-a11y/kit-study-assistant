@@ -1,6 +1,6 @@
 # 用 Docker 部署到云服务器
 
-[English](deploy-cloud.md) · **中文**
+[English](deploy-cloud.md) · **中文** · [Deutsch](deploy-cloud.de.md)
 
 没有树莓派也可以：任何一台一直开着的小 Linux 服务器都行。跟着做大约 30 分钟，从一台空服务器到在 Telegram 里收到第一条消息。
 
@@ -55,7 +55,7 @@ docker compose build
 docker compose run --rm assistant python3 setup.py
 ```
 
-向导会登录 ILIAS 列出你的课程，这学期的已经勾好；每个密码填完马上检查；你给机器人发一句话，它就自动找到你的 chat ID。
+向导先问你用中文还是德语，然后登录 ILIAS 列出你的课程，这学期的已经勾好；每个密码填完马上检查；你给机器人发一句话，它就自动找到你的 chat ID。
 大约 5 分钟，最后一个问题答完才保存。（想自己手动填：把 `mail_digest/config.example.toml` 复制成 `data/config.toml`，`mail_digest/.env.example` 复制成 `data/.env`。）
 
 属于你自己的东西都在 `data/` 里：设置、密码，以及程序运行时生成的文件（`deadlines.json` 等）。代码文件夹不会被改动，所以更新代码很安全。

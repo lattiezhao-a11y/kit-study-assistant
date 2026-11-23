@@ -28,6 +28,7 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
+import i18n
 from digest import DATA
 
 HERE = Path(__file__).resolve().parent
@@ -35,118 +36,12 @@ CONFIG = DATA / "config.toml"
 ENV = DATA / ".env"
 BACKUP_DIR = DATA / "backup"
 EXAMPLE = HERE / "config.example.toml"
-LANGS = {"zh": "中文", "de": "Deutsch"}
-LANG = "zh"
 
 # ---------------------------------------------------------------- 文字
-# 和 i18n.py 一样的格式：每句话 {"zh": ..., "de": ...}。德语还没写的，先显示中文。
-TEXTS: dict[str, dict[str, str]] = {
-    "hello": {"zh": "👋 KIT 学习助理 · 安装向导\n"
-                    "大约 5 分钟。每一步都会马上检查，全部答完才会写文件；随时按 Ctrl+C 退出，什么都不会改。"},
-    "de_soon": {"zh": "Die deutsche Version des Assistenten kommt bald – die Fragen sind vorerst auf Chinesisch.\n"
-                      "Der Bot selbst antwortet danach auf Deutsch."},
-    "exists": {"zh": "已经有一份设置了（{path}）。要做什么？"},
-    "exists.all": {"zh": "全部重新设置（旧文件先备份）"},
-    "exists.courses": {"zh": "只重新选课程（新学期）"},
-    "exists.cancel": {"zh": "取消"},
-    "cancelled": {"zh": "已取消，什么都没改。"},
-    "default": {"zh": "（直接回车 = {d}）"},
-    "required": {"zh": "这一项必须填。"},
-    "yes_no": {"zh": "[Y/n]"},
-    "no_yes": {"zh": "[y/N]"},
-    "choose": {"zh": "请输入序号："},
-    "bad_choice": {"zh": "没看懂，请输入列表里的序号。"},
-    "check_ok": {"zh": "  ✅ {what}"},
-    "check_fail": {"zh": "  ❌ {what}：{err}"},
-    "retry": {"zh": "重新输入？（选 n 就先跳过，以后再改 {file}）"},
-    "skip_check": {"zh": "  （--no-check：跳过联网检查）"},
+# 向导的文字都在 i18n.py 里（键以 "su." 开头），每句都有中文和德语。
 
-    "s.kit": {"zh": "① KIT 账号"},
-    "kit.user": {"zh": "KIT 账号（u 开头，比如 uabcd）："},
-    "kit.pw": {"zh": "KIT 密码（输入时不显示）："},
-    "kit.login": {"zh": "正在登录 ILIAS，读取你的课程…（大约 10~20 秒）"},
-    "kit.ilias_ok": {"zh": "ILIAS 登录成功"},
-    "kit.imap_ok": {"zh": "KIT 邮箱登录成功（只读）"},
-    "kit.ilias": {"zh": "ILIAS 登录"},
-    "kit.imap": {"zh": "KIT 邮箱"},
-
-    "s.courses": {"zh": "② 选择要跟踪的课程"},
-    "c.current": {"zh": "这学期（{sem}）："},
-    "c.older": {"zh": "往届的课："},
-    "c.show_older": {"zh": "往届的课还有 {n} 门，要显示吗？"},
-    "c.none_current": {"zh": "没找到这学期的课。"},
-    "c.pick": {"zh": "要跟踪哪几门？输入序号，用空格分开，比如 1 3 4。"},
-    "c.pick_default": {"zh": "直接回车 = 选上面打了 ✓ 的（{list}）；输入 0 = 一门都不选"},
-    "c.name": {"zh": "「{title}」的简称（机器人回答时用这个名字）"},
-    "c.groups": {"zh": "    └ 你的 Tutorium：{g}"},
-    "c.manual": {"zh": "手动输入课程：打开课程页面，网址里 goto.php/crs/ 后面的数字就是课程编号。\n"
-                       "输入课程编号，用空格分开（直接回车 = 先不加课程）："},
-    "c.manual_name": {"zh": "课程 {crs} 的简称："},
-    "c.list_fail": {"zh": "读不到课程列表（{err}），改成手动输入。"},
-    "c.chosen": {"zh": "选好了 {n} 门课。"},
-
-    "s.ical": {"zh": "③ ILIAS 日历订阅链接（可以跳过）"},
-    "ical.help": {"zh": "有了它，ILIAS 日历里的 Abgabetermin 会直接进提醒。\n"
-                        "在 ILIAS：个人桌面 → 日历 → 右上角的「订阅」（Abonnieren）→ 复制链接。"},
-    "ical.url": {"zh": "粘贴链接（直接回车 = 跳过）："},
-    "ical.bad": {"zh": "这看起来不像 ILIAS 的日历链接（应该以 https:// 开头），已跳过。"},
-
-    "s.gmail": {"zh": "④ Gmail（可以跳过）"},
-    "gmail.want": {"zh": "也要整理 Gmail 的邮件吗？"},
-    "gmail.help": {"zh": "Gmail 要用「应用专用密码」，不是登录密码：\n"
-                         "先在 Google 账号里开两步验证，再打开 https://myaccount.google.com/apppasswords 生成一个。\n"
-                         "（Hotmail/Outlook 不能用密码登录了，可以在 Outlook 设置里自动转发到 Gmail。）"},
-    "gmail.addr": {"zh": "Gmail 地址："},
-    "gmail.pw": {"zh": "应用专用密码（16 个字母，输入时不显示）："},
-    "gmail.ok": {"zh": "Gmail 登录成功（只读）"},
-
-    "s.llm": {"zh": "⑤ AI"},
-    "llm.help": {"zh": "邮件分类、读 ILIAS 截止时间、聊天都要用 AI。默认用 DeepSeek（便宜），\n"
-                       "任何兼容 OpenAI 接口的服务都可以。DeepSeek 的 key：https://platform.deepseek.com/api_keys"},
-    "llm.url": {"zh": "接口地址"},
-    "llm.model": {"zh": "模型"},
-    "llm.key": {"zh": "API key（输入时不显示）："},
-    "llm.ok": {"zh": "API key 可以用（检查不花 token）"},
-    "llm.check": {"zh": "AI 接口"},
-
-    "s.tg": {"zh": "⑥ Telegram 机器人"},
-    "tg.help": {"zh": "在 Telegram 里找 @BotFather，发 /newbot，按提示起名字，最后它会给你一串 token。"},
-    "tg.token": {"zh": "机器人 token（输入时不显示）："},
-    "tg.ok": {"zh": "找到机器人 @{name}"},
-    "tg.check": {"zh": "Telegram token"},
-    "tg.send_now": {"zh": "现在打开 Telegram，给 @{name} 随便发一句话（比如「你好」）。我在等…（最多 2 分钟）"},
-    "tg.got": {"zh": "收到了！你的 chat ID 是 {id}"},
-    "tg.timeout": {"zh": "2 分钟内没收到消息。"},
-    "tg.busy": {"zh": "这个机器人已经在别处运行（Telegram 不让两个程序同时收消息），没法自动找 chat ID。"},
-    "tg.manual": {"zh": "手动输入 chat ID（给 @userinfobot 发消息可以查到；直接回车 = 先空着）："},
-
-    "s.about": {"zh": "⑦ 介绍一下你自己（可以跳过）"},
-    "about.help": {"zh": "一两句话告诉 AI 你关心什么，它分邮件时会参考。"},
-    "about.q": {"zh": "你的介绍"},
-
-    "s.write": {"zh": "⑧ 保存"},
-    "w.backup": {"zh": "旧文件已备份到 {path}"},
-    "w.done": {"zh": "✅ 已保存：\n   {config}\n   {env}（只有你自己能读）"},
-    "w.test_msg": {"zh": "要不要现在往 Telegram 发一条测试消息？"},
-    "w.test_text": {"zh": "✅ KIT 学习助理设置好了！以后摘要和提醒都会发到这里。"},
-    "w.test_ok": {"zh": "  ✅ 发出去了，看看 Telegram"},
-    "w.next_docker": {"zh": "下一步：\n"
-                            "  docker compose run --rm assistant python3 digest.py --dry-run   试运行，不发任何消息\n"
-                            "  docker compose up -d                                            正式启动"},
-    "w.next_local": {"zh": "下一步：\n"
-                           "  python3 digest.py --dry-run        试运行邮件分类，不发任何消息\n"
-                           "  python3 ilias_sync.py --dry-run    试运行 ILIAS 截止时间\n"
-                           "  然后按 README 安装 systemd 定时器"},
-    "w.courses_done": {"zh": "✅ 课程已更新（{n} 门）。机器人要重启后才认识新课程：\n"
-                             "  Docker：docker compose restart    树莓派：sudo systemctl restart bot.service"},
-    "w.no_config": {"zh": "还没有 config.toml，请先运行 python3 setup.py 完成安装。"},
-}
-
-
-def tr(key: str, **kw) -> str:
-    d = TEXTS[key]
-    s = d.get(LANG) or d["zh"]
-    return s.format(**kw) if kw else s
+def tr(key: str, /, **kw) -> str:
+    return i18n.tr("su." + key, **kw)
 
 
 # ---------------------------------------------------------------- 输入
@@ -232,7 +127,7 @@ def check_llm(base_url: str, key: str) -> None:
         with urllib.request.urlopen(req, timeout=20) as r:
             r.read()
     except urllib.error.HTTPError as e:
-        raise RuntimeError("key 不对（401）" if e.code == 401 else f"HTTP {e.code}") from None
+        raise RuntimeError(tr("llm.bad_key") if e.code == 401 else f"HTTP {e.code}") from None
 
 
 def tg_call(token: str, method: str, **params) -> dict:
@@ -320,15 +215,15 @@ def render_config(a: dict, example: dict) -> str:
     acc_text = "\n\n".join(
         f"[[accounts]]\nname = {q(x['name'])}\nhost = {q(x['host'])}\nport = 993\n"
         f"user = {q(x['user'])}\npassword_env = {q(x['password_env'])}\nfolder = \"INBOX\"\n"
-        f"llm = true                   # false = 这个邮箱的邮件不发给 AI" for x in accounts)
-    return f"""# 由安装向导 setup.py 生成（{dt.datetime.now():%Y-%m-%d %H:%M}）。可以直接改；密码不在这里，在 .env 里。
-# 新学期重选课程：python3 setup.py --courses
+        f"llm = true                   {tr('cfg.acc_llm')}" for x in accounts)
+    head = tr("cfg.head", time=dt.datetime.now().strftime("%Y-%m-%d %H:%M"))
+    return f"""{head}
 
 [general]
-language = {q(a['language'])}            # 界面语言：zh = 中文，de = 德语
-since_days = {q(g.get('since_days', 1))}           # 第一次运行时回看几天
+language = {q(a['language'])}            {tr('cfg.language')}
+since_days = {q(g.get('since_days', 1))}           {tr('cfg.since_days')}
 max_per_account = {q(g.get('max_per_account', 100))}
-snippet_chars = {q(g.get('snippet_chars', 300))}       # 每封邮件发给 AI 的正文字数上限
+snippet_chars = {q(g.get('snippet_chars', 300))}       {tr('cfg.snippet')}
 send_when_empty = {q(g.get('send_when_empty', False))}
 
 [llm]
@@ -338,16 +233,16 @@ model = {q(a['llm_model'])}
 api_key_env = {q(a['llm_key_env'])}
 batch_size = {q(llm.get('batch_size', 40))}
 about_me = {q(a['about_me'])}
-# 这些邮件一律归为"忽略"（还是会列在摘要最后，邮件也还在邮箱里）
+{tr('cfg.ignore')}
 always_ignore = [
-{"".join(f"  {q(x)},{chr(10)}" for x in llm.get('always_ignore', []))}]
+{"".join(f"  {q(x)},{chr(10)}" for x in tr('cfg.ignore_rules').split(chr(10)))}]
 
 [job]
-job_search = false        # 开始找工作时改成 true，并填写 profile
+job_search = false        {tr('cfg.job')}
 profile = {q(example.get('job', {}).get('profile', 'Werkstudent'))}
 
 [safety_net]
-# 这些发件人的邮件至少是"必须处理"（只会往上调）。按"包含"匹配，不区分大小写。
+{tr('cfg.safety')}
 always_important_senders = []
 
 [telegram]
@@ -360,16 +255,16 @@ chat_id_env = "TELEGRAM_CHAT_ID"
 user = {q(a['kit_user'])}
 password_env = "KIT_PASSWORD"
 ical_url_env = "ILIAS_ICAL_URL"
-quiet_hours = {q(ilias.get('quiet_hours', [0, 7]))}       # 这段时间不发 3 天 / 1 天的提醒（3 小时的照发）
+quiet_hours = {q(ilias.get('quiet_hours', [0, 7]))}       {tr('cfg.quiet')}
 skip_folders = {q(ilias.get('skip_folders', ''))}
 
-# 跟踪的课程。crs = 课程编号；groups = 你的 Tutorium；read_pages = false：只看新文件，不读页面文字
+{tr('cfg.courses')}
 {render_courses(a['courses'])}"""
 
 
 def render_env(v: dict) -> str:
     """没填的也写一行空的（Gmail 除外），以后打开 .env 就知道还差什么。"""
-    lines = ["# 由安装向导 setup.py 生成。全是密码：不要发给别人，不要上传。"]
+    lines = [tr("env.head")]
     for k in ("KIT_PASSWORD", "GMAIL_APP_PASSWORD", v.get("_llm_key_env", "DEEPSEEK_API_KEY"),
               "TELEGRAM_BOT_TOKEN", "TELEGRAM_CHAT_ID", "ILIAS_ICAL_URL"):
         if k in v or k != "GMAIL_APP_PASSWORD":
@@ -489,7 +384,7 @@ def choose_courses(items: list[dict], existing: dict[int, dict]) -> list[dict]:
         g = groups.get(c["ref"]) or old.get("groups") or []
         if g:
             entry["groups"] = g
-            print(tr("c.groups", g="、".join(group_titles.get(x, str(x)) for x in g)))
+            print(tr("c.groups", g=tr("c.sep").join(group_titles.get(x, str(x)) for x in g)))
         else:
             entry.pop("groups", None)
         chosen.append(entry)
@@ -640,19 +535,17 @@ def step_telegram(env: dict, check: bool) -> None:
 
 
 def pick_language() -> str:
-    global LANG
-    print("请选择语言 / Bitte wähle eine Sprache:")
-    codes = list(LANGS)
+    """选好以后，向导后面的问题就用这个语言；也写进 config.toml 的 [general] language。"""
+    print(i18n.PICK)
+    codes = list(i18n.LANGS)
     for i, c in enumerate(codes, 1):
-        print(f"  {i}. {LANGS[c]}")
+        print(f"  {i}. {i18n.LANGS[c]}")
     while True:
         v = input("> ").strip() or "1"
         if v.isdigit() and 1 <= int(v) <= len(codes):
             lang = codes[int(v) - 1]
             break
-    LANG = "zh"          # 向导的德语文字还没写，先用中文；写进 config 的 language 照样是用户选的
-    if lang == "de":
-        print(tr("de_soon"))
+    i18n.LANG = lang
     return lang
 
 
@@ -672,7 +565,7 @@ def run_full(check: bool) -> int:
     step_telegram(env, check)
     title("s.about")
     print(tr("about.help"))
-    a["about_me"] = ask(tr("about.q"), default=example["llm"].get("about_me", ""))
+    a["about_me"] = ask(tr("about.q"), default=tr("about.default"))
 
     title("s.write")
     text = render_config(a, example)
@@ -694,14 +587,13 @@ def run_full(check: bool) -> int:
 
 
 def run_courses(check: bool) -> int:
-    global LANG
     if not CONFIG.exists():
         print(tr("w.no_config"))
         return 1
     from digest import load_env, secret
     text = CONFIG.read_text(encoding="utf-8")
     cfg = tomllib.loads(text)
-    LANG = "zh"
+    i18n.use(cfg)
     load_env(ENV)
     icfg = cfg.get("ilias", {})
     existing = {int(c["crs"]): c for c in icfg.get("courses", [])}
@@ -723,9 +615,12 @@ def run_courses(check: bool) -> int:
 
 
 def main() -> int:
-    ap = argparse.ArgumentParser(description="安装向导：生成 config.toml 和 .env")
-    ap.add_argument("--courses", action="store_true", help="新学期：只重新选课程")
-    ap.add_argument("--no-check", action="store_true", help="不联网检查（测试用）")
+    ap = argparse.ArgumentParser(description="安装向导：生成 config.toml 和 .env / "
+                                             "Einrichtungsassistent: erstellt config.toml und .env")
+    ap.add_argument("--courses", action="store_true",
+                    help="新学期：只重新选课程 / neues Semester: nur die Kurse neu wählen")
+    ap.add_argument("--no-check", action="store_true",
+                    help="不联网检查（测试用）/ ohne Online-Prüfung (für Tests)")
     args = ap.parse_args()
     if hasattr(sys.stdout, "reconfigure"):
         sys.stdout.reconfigure(encoding="utf-8")
@@ -734,6 +629,10 @@ def main() -> int:
         if args.courses:
             return run_courses(check)
         if CONFIG.exists():
+            try:                                   # 已经有设置：用里面写的语言问
+                i18n.use(tomllib.loads(CONFIG.read_text(encoding="utf-8")))
+            except (OSError, tomllib.TOMLDecodeError):
+                pass
             choice = menu(tr("exists", path=CONFIG),
                           [tr("exists.all"), tr("exists.courses"), tr("exists.cancel")])
             if choice == 1:

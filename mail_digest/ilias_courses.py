@@ -21,6 +21,8 @@ import sys
 import tomllib
 from pathlib import Path
 
+import i18n
+
 MEMBERSHIP_URL = "/ilias.php?baseClass=ilmembershipoverviewgui"
 HEADING = re.compile(r"<h[1-6][^>]*>(.*?)</h[1-6]>", re.S)
 ITEM = re.compile(r'goto\.php/(crs|grp)/(\d+)')
@@ -145,7 +147,7 @@ def format_courses(items: list[dict], tracked: set[int] = frozenset()) -> str:
     lines = []
     for s in sems:
         cur = any(c.get("current") for c in courses if c["semester"] == s)
-        lines.append(f"\n{semester_label(s)}{'（这学期）' if cur else ''}")
+        lines.append(f"\n{semester_label(s)}{i18n.tr('ic.current') if cur else ''}")
         for c in (c for c in courses if c["semester"] == s):
             mark = "✓" if c["ref"] in tracked else " "
             lines.append(f"  {mark} {c['name']}   crs {c['ref']}")
@@ -153,7 +155,7 @@ def format_courses(items: list[dict], tracked: set[int] = frozenset()) -> str:
                 lines.append(f"      └ {groups[g]['title']}   grp {g}")
     lost = [g for g in groups.values() if not g.get("course")]
     if lost:
-        lines.append("\n其他 Tutorium（没找到属于哪门课，或者是往届的）")
+        lines.append("\n" + i18n.tr("ic.lost"))
         lines += [f"    {g['title']}   grp {g['ref']}" for g in lost]
     return "\n".join(lines).lstrip("\n")
 
@@ -162,19 +164,23 @@ def main() -> int:
     from digest import DATA, load_env, secret
     from ilias_sync import Ilias
 
-    ap = argparse.ArgumentParser(description="列出我在 ILIAS 加入的所有课程和 Tutorium（只读）")
+    ap = argparse.ArgumentParser(description="列出我在 ILIAS 加入的所有课程和 Tutorium（只读）/ "
+                                             "alle meine ILIAS-Kurse und Tutorien auflisten (nur lesend)")
     ap.add_argument("--config", default=str(DATA / "config.toml"))
-    ap.add_argument("--all", action="store_true", help="往届的 Tutorium 也去找属于哪门课")
+    ap.add_argument("--all", action="store_true",
+                    help="往届的 Tutorium 也去找属于哪门课 / auch Tutorien früherer Semester zuordnen")
     args = ap.parse_args()
     if hasattr(sys.stdout, "reconfigure"):
         sys.stdout.reconfigure(encoding="utf-8")
     load_env(DATA / ".env")
-    icfg = tomllib.loads(Path(args.config).read_text(encoding="utf-8"))["ilias"]
+    cfg = tomllib.loads(Path(args.config).read_text(encoding="utf-8"))
+    i18n.use(cfg)
+    icfg = cfg["ilias"]
     il = Ilias(icfg["user"], secret(icfg["password_env"]))
     items = my_courses(il, look_up_all_groups=args.all)
     tracked = {int(c["crs"]) for c in icfg.get("courses", [])}
     n = sum(1 for i in items if i["kind"] == "crs")
-    print(f"ILIAS 上你加入了 {n} 门课（✓ = config.toml 里已经在跟踪）：\n")
+    print(i18n.tr("ic.head", n=n))
     print(format_courses(items, tracked))
     return 0
 

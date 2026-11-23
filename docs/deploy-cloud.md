@@ -1,6 +1,6 @@
 # Deploy on a cloud server with Docker
 
-**English** · [中文](deploy-cloud.zh-CN.md)
+**English** · [中文](deploy-cloud.zh-CN.md) · [Deutsch](deploy-cloud.de.md)
 
 No Raspberry Pi? Any small Linux server that is always on works just as well. This guide takes about 30 minutes,
 from an empty server to the first message in Telegram.
@@ -57,7 +57,7 @@ docker compose build
 docker compose run --rm assistant python3 setup.py
 ```
 
-The wizard logs in to ILIAS and lists your courses, with this semester's already selected. It checks every password right away,
+The wizard first asks for your language (Chinese or German). It logs in to ILIAS and lists your courses, with this semester's already selected. It checks every password right away,
 and finds your Telegram chat ID once you send your bot a message. It takes about 5 minutes. Nothing is saved before the last question.
 (Prefer editing by hand? Copy `mail_digest/config.example.toml` to `data/config.toml` and `mail_digest/.env.example` to `data/.env`.)
 

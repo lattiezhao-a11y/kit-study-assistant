@@ -29,6 +29,7 @@ from pathlib import Path
 
 import forums as forums_mod
 import i18n
+from ilias_courses import format_news, my_courses, open_button, semester_news
 from common import (DATA, TZ, load_env, load_json, now, save_json, secret, send_telegram,
                     strip_tags)
 from i18n import tr
@@ -460,7 +461,7 @@ def main() -> int:
 
     # 2–3. Login and crawl
     texts, pdfs, forums = [], [], {}
-    forum_msg, forum_tokens = "", 0
+    forum_msg, forum_tokens, course_msg = "", 0, ""
     try:
         il = Ilias(icfg["user"], secret(icfg["password_env"]))
         skip = re.compile(icfg["skip_folders"], re.I) if icfg.get("skip_folders") else None
@@ -497,6 +498,17 @@ def main() -> int:
                 if found_crs:
                     state["exc_course"][ref] = next(c["name"] for c in icfg["courses"]
                                                     if str(c["crs"]) == found_crs[0])
+        # Once a day from 07:00: new semester or newly joined, untracked courses. The bot only sees
+        # courses joined in ILIAS; the notice's button opens the bot's course menu.
+        today = now().date().isoformat()
+        if now().hour >= 7 and state.get("courses_checked") != today:
+            try:
+                tracked = {int(c["crs"]) for c in icfg["courses"]}
+                news = semester_news(my_courses(il), tracked, state, now().date())
+                state["courses_checked"] = today
+                course_msg = format_news(news) if news else ""
+            except Exception as e:
+                print(f"课程列表检查失败，下次再试：{e}")
         # Forums run only at forum_hour daily (default 19:00, alongside the 19:30 email check).
         if args.forums or now().hour == icfg.get("forum_hour", 19):
             try:
@@ -558,6 +570,8 @@ def main() -> int:
     if args.dry_run:
         if forum_msg:
             print(re.sub(r"<[^>]+>", "", forum_msg) + "\n")
+        if course_msg:
+            print(re.sub(r"<[^>]+>", "", course_msg) + "\n")
         print(re.sub(r"<[^>]+>", "", "\n\n".join(msg)) or "（没有要推送的内容）")
         print(f"\n[dry-run] tokens={tokens}，没有保存、没有推送")
         return 0
@@ -565,6 +579,8 @@ def main() -> int:
         send_telegram("\n\n".join(msg), cfg["telegram"])
     if forum_msg:
         send_telegram(forum_msg, cfg["telegram"])          # Send the forum summary as a separate message.
+    if course_msg:
+        send_telegram(course_msg, cfg["telegram"], reply_markup=open_button())
     save_json(STATE_FILE, state)
     print(f"新增 {len(added)} 个截止时间，tokens={tokens}，错误 {len(errors)} 个")
     return 0

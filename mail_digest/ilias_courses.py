@@ -2,12 +2,15 @@
 """List all ILIAS courses and Tutorium groups joined by the user without using tokens.
 
 The “Meine Kurse und Gruppen” page groups memberships by semester. Group pages are
-opened to identify their parent courses. wizard.py and its --courses mode use these functions.
+opened to identify their parent courses. wizard.py (--courses), the bot's /courses menu and
+ilias_sync.py's new-semester notice share the functions below.
 """
 from __future__ import annotations
 
 import argparse
 import datetime as dt
+import html
+import json
 import re
 import sys
 import tomllib
@@ -15,6 +18,7 @@ from pathlib import Path
 
 import i18n
 from common import strip_tags
+from i18n import tr
 
 MEMBERSHIP_URL = "/ilias.php?baseClass=ilmembershipoverviewgui"
 HEADING = re.compile(r"<h[1-6][^>]*>(.*?)</h[1-6]>", re.S)
@@ -147,6 +151,167 @@ def format_courses(items: list[dict], tracked: set[int] = frozenset()) -> str:
         lines += [f"    {g['title']}   grp {g['ref']}" for g in lost]
     return "\n".join(lines).lstrip("\n")
 
+# ---------------------------------------------------------------- Tracked courses in config.toml
+
+def toml_value(v) -> str:
+    """Convert a Python value to TOML; TOML accepts JSON string notation."""
+    if isinstance(v, bool):
+        return "true" if v else "false"
+    if isinstance(v, (int, float)):
+        return str(v)
+    if isinstance(v, str):
+        return json.dumps(v, ensure_ascii=False)
+    if isinstance(v, (list, tuple)):
+        return "[" + ", ".join(toml_value(x) for x in v) + "]"
+    raise TypeError(type(v))
+
+
+def render_courses(courses: list[dict]) -> str:
+    out = []
+    for c in courses:
+        lines = ["[[ilias.courses]]", f"name = {toml_value(c['name'])}", f"crs = {int(c['crs'])}"]
+        if c.get("groups"):
+            lines.append(f"groups = {toml_value([int(g) for g in c['groups']])}")
+        for k, v in c.items():                         # Preserve other existing settings such as read_pages.
+            if k not in ("name", "crs", "groups"):
+                lines.append(f"{k} = {toml_value(v)}")
+        out.append("\n".join(lines))
+    return "\n\n".join(out) + ("\n" if out else "")
+
+
+def replace_courses(text: str, courses: list[dict]) -> str:
+    """Replace every [[ilias.courses]] block while preserving all other config text, including comments."""
+    lines = text.splitlines(keepends=True)
+    out: list[str] = []
+    block: list[str] | None = None        # Course block currently being skipped.
+    insert_at: int | None = None
+
+    def end_block() -> None:
+        # Comments and blank lines after a course block belong to the following block, so preserve them.
+        keep = []
+        while block and (not block[-1].strip() or block[-1].lstrip().startswith("#")):
+            keep.insert(0, block.pop())
+        out.extend(keep)
+
+    for line in lines:
+        s = line.strip()
+        if s.startswith("["):
+            if block is not None:
+                end_block()
+                block = None
+            if s.replace(" ", "") == "[[ilias.courses]]":
+                if insert_at is None:
+                    insert_at = len(out)
+                block = []
+                continue
+        if block is not None:
+            block.append(line)
+        else:
+            out.append(line)
+    if block is not None:
+        end_block()
+    new = render_courses(courses)
+    if insert_at is None:
+        if out and not out[-1].endswith("\n"):
+            out.append("\n")
+        out.append("\n" + new)
+    else:
+        out.insert(insert_at, new + ("\n" if courses else ""))
+    result = "".join(out)
+    result = re.sub(r"\n{3,}", "\n\n", result)
+    tomllib.loads(result)                  # Fail here for invalid output before saving it.
+    return result
+
+
+def merge_courses(items: list[dict], existing: dict[int, dict], picked: list[int],
+                  names: dict[int, str] | None = None) -> list[dict]:
+    """Build [[ilias.courses]] entries for the picked course refs.
+
+    Existing entries keep their short name and other settings (read_pages, ...); Tutorium groups
+    come from ILIAS when known. Existing courses keep their order, new ones are appended, so
+    saving an unchanged selection leaves config.toml unchanged.
+    """
+    by_ref = {c["ref"]: c for c in items if c["kind"] == "crs"}
+    groups = groups_by_course(items)
+    chosen = []
+    for ref in picked:
+        old = dict(existing.get(ref, {}))
+        name = (names or {}).get(ref) or old.get("name") or (by_ref[ref]["name"] if ref in by_ref else str(ref))
+        entry = {**old, "name": name, "crs": ref}
+        g = groups.get(ref) or old.get("groups") or []
+        if g:
+            entry["groups"] = g
+        else:
+            entry.pop("groups", None)
+        chosen.append(entry)
+    order = list(existing)
+    chosen.sort(key=lambda e: order.index(e["crs"]) if e["crs"] in order else len(order))
+    return chosen
+
+
+# ---------------------------------------------------------------- Telegram course menu and notices
+
+def menu_choices(items: list[dict], existing: dict[int, dict]) -> list[dict]:
+    """Courses offered in the bot's menu: tracked ones first, then this semester's untracked ones,
+    then tracked courses ILIAS no longer lists. Only courses the user joined in ILIAS appear."""
+    courses = [c for c in items if c["kind"] == "crs"]
+    out, seen = [], set()
+
+    def add(ref: int, name: str, note: str = "") -> None:
+        if ref not in seen:
+            seen.add(ref)
+            out.append({"ref": ref, "name": name, "note": note})
+    for ref, e in existing.items():
+        c = next((c for c in courses if c["ref"] == ref), None)
+        if c:
+            add(ref, e.get("name") or c["name"], "" if c.get("current") else semester_label(c["semester"]))
+    for c in courses:
+        if c.get("current"):
+            add(c["ref"], c["name"])
+    for ref, e in existing.items():
+        add(ref, e.get("name") or str(ref), tr("cs.gone"))
+    return out
+
+
+def semester_news(items: list[dict], tracked: set[int], state: dict,
+                  today: dt.date | None = None) -> dict | None:
+    """Decide whether to announce a new semester and/or newly joined, untracked courses.
+
+    Updates state in place. Each course is announced once. The first check after installing
+    only records what exists, so courses the user deliberately left out are not announced.
+    """
+    sem = semester_label(current_semester(today))
+    fresh = [c for c in items if c["kind"] == "crs" and c.get("current") and c["ref"] not in tracked]
+    offered = state.get("courses_offered")
+    if offered is None:
+        state["courses_offered"] = sorted(c["ref"] for c in fresh)
+        state["semester_announced"] = sem
+        return None
+    new = [c for c in fresh if c["ref"] not in offered]
+    new_semester = state.get("semester_announced") != sem
+    if not new and not new_semester:
+        return None
+    state["courses_offered"] = sorted(set(offered) | {c["ref"] for c in new})
+    state["semester_announced"] = sem
+    return {"semester": sem, "new_semester": new_semester, "courses": [c["name"] for c in new]}
+
+
+def format_news(news: dict) -> str:
+    """Telegram (HTML) text for semester_news(); sent together with open_button()."""
+    lines = [tr("cs.new_sem", sem=news["semester"])] if news["new_semester"] else []
+    if news["courses"]:
+        key = "cs.found" if news["new_semester"] else "cs.found_more"
+        lines.append(tr(key, n=len(news["courses"])))
+        lines += [f"• {html.escape(n)}" for n in news["courses"]]
+        lines.append(tr("cs.pick_hint"))
+    else:
+        lines.append(tr("cs.join_first"))
+    return "\n".join(lines)
+
+
+def open_button() -> dict:
+    return {"inline_keyboard": [[{"text": tr("cs.open"), "callback_data": "crs:open"}]]}
+
 
 def main() -> int:
     from common import DATA, load_env, secret
@@ -161,7 +326,7 @@ def main() -> int:
     if hasattr(sys.stdout, "reconfigure"):
         sys.stdout.reconfigure(encoding="utf-8")
     load_env(DATA / ".env")
-    cfg = tomllib.loads(Path(args.config).readstrip_tags(encoding="utf-8"))
+    cfg = tomllib.loads(Path(args.config).read_text(encoding="utf-8"))
     i18n.use(cfg)
     icfg = cfg["ilias"]
     il = Ilias(icfg["user"], secret(icfg["password_env"]))

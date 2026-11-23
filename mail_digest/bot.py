@@ -52,7 +52,7 @@ POLL_SECONDS = 10          # Long-poll duration; broken connections are detected
 TYPING_EVERY = 4           # Refresh Telegram's typing indicator before its five-second expiry.
 # deepseek-flash prices in USD per million tokens; used only to estimate cost.
 PRICE_IN, PRICE_OUT = 0.30, 1.20
-COMMANDS = ("start", "language", "new", "usage", "help")    # Commands shown in Telegram's slash-command menu.
+COMMANDS = ("start", "language", "courses", "new", "usage", "help")    # Commands shown in Telegram's slash-command menu.
 
 
 # ---------------------------------------------------------------- State and usage
@@ -349,13 +349,72 @@ def set_commands(tg: Telegram) -> None:
         print(f"设置命令菜单失败（不影响使用）：{e}", flush=True)
 
 
+def edit_or_send(tg: Telegram, owner: str, message_id, text: str) -> None:
+    """Replace a button message's text (which also removes its buttons); send a new message if that fails."""
+    try:
+        tg.call("editMessageText", http_timeout=10, chat_id=owner, message_id=message_id, text=text)
+    except Exception:
+        tg.send(owner, text)
+
+
+def open_course_menu(tg: Telegram, owner: str) -> None:
+    """Send the course checklist (only courses joined in ILIAS); reading ILIAS takes about 10 seconds."""
+    try:
+        tg.send(owner, tr("cs.loading"))
+        text, kb = tools.courses.open_menu()
+    except Exception as e:
+        traceback.print_exc()
+        try:
+            tg.send(owner, tr("cs.failed", err=e))
+        except Exception:
+            pass
+        return
+    try:
+        res = tg.call("sendMessage", http_timeout=15, chat_id=owner, text=text, reply_markup=kb)
+    except Exception as e:                      # Never let a failed send stop the main loop.
+        print(f"选课列表发送失败：{e}", flush=True)
+        return
+    tools.courses.MENU["message_id"] = res.get("message_id") if isinstance(res, dict) else None
+
+
+def on_course_button(tg: Telegram, owner: str, cq: dict, action: str) -> None:
+    """crs:open (button under the new-semester notice), crs:t:<ref> toggle, crs:save, crs:cancel."""
+    menu = tools.courses
+    message_id = (cq.get("message") or {}).get("message_id")
+    if action == "open":
+        open_course_menu(tg, owner)
+        return
+    if not menu.is_live(message_id):            # Older menu, or the bot restarted since it was sent.
+        edit_or_send(tg, owner, message_id, tr("cs.expired"))
+        return
+    if action.startswith("t:") and action[2:].isdigit():
+        menu.toggle(int(action[2:]))
+        tg.call("editMessageReplyMarkup", http_timeout=10, chat_id=owner, message_id=message_id,
+                reply_markup=menu.keyboard())
+    elif action == "save":
+        try:
+            result = menu.save()
+        except ValueError as e:                 # Nothing picked: keep the menu open.
+            tg.send(owner, str(e))
+            return
+        except Exception as e:
+            traceback.print_exc()
+            result = tr("bot.not_changed", err=e)
+        edit_or_send(tg, owner, message_id, result)
+    elif action == "cancel":
+        edit_or_send(tg, owner, message_id, menu.cancel())
+
+
 def on_button(tg: Telegram, owner: str, cq: dict, history: list[dict]) -> None:
-    """Handle a button press; currently only language-selection buttons exist."""
+    """Handle a button press: language selection (lang:*) or the course menu (crs:*)."""
     try:
         tg.call("answerCallbackQuery", http_timeout=10, callback_query_id=cq["id"])   # Stop the button's loading spinner.
     except Exception:
         pass
     data = str(cq.get("data") or "")
+    if data.startswith("crs:"):
+        on_course_button(tg, owner, cq, data[4:])
+        return
     code = data.partition(":")[2]
     if not data.startswith("lang:") or code not in i18n.LANGS:
         return
@@ -461,6 +520,9 @@ def main() -> int:
             if cmd == "/help":
                 tg.send(owner, help_text())
                 continue
+            if cmd == "/courses":
+                open_course_menu(tg, owner)
+                continue
             if cmd == "/new":
                 history.clear()
                 tg.send(owner, tr("bot.new"))
@@ -511,6 +573,8 @@ def main() -> int:
                       flush=True)
             except Exception as e:
                 print(f"发送失败：{e}", flush=True)
+            if tools.PENDING.pop("courses_menu", None):   # The AI asked for the course menu (courses_menu tool).
+                open_course_menu(tg, owner)
 
 
 if __name__ == "__main__":

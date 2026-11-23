@@ -189,15 +189,25 @@ def set_toml(text: str, section: str, key: str, value) -> str:
 
 
 def write_config(sec: str, key: str, value) -> Path:
-    """只改 config.toml 里的一项：先检查、再备份、再写入，返回备份文件。base.CFG 跟着更新。"""
+    """Change one config.toml item: verify, back up, then write. Returns the backup file; CFG is refreshed."""
     old_text = base.CONFIG_PATH.read_text(encoding="utf-8")
     new_text = set_toml(old_text, sec, key, value)
     expect = tomllib.loads(old_text)
     expect.setdefault(sec, {})[key] = value
-    if tomllib.loads(new_text) != expect:            # Everything except this item must remain identical.
+    return write_config_text(new_text, expect)
+
+
+def write_config_text(new_text: str, expect: dict) -> Path:
+    """Replace config.toml with new_text only if it parses to exactly `expect`, after a backup.
+    Returns the backup file; CFG is refreshed."""
+    if tomllib.loads(new_text) != expect:            # Everything except the intended change must remain identical.
         raise RuntimeError(tr("set.check_failed"))
     base.BACKUP_DIR.mkdir(exist_ok=True)
-    backup = base.BACKUP_DIR / f"config.toml.{now():%Y%m%d-%H%M%S}"
+    stamp = f"config.toml.{now():%Y%m%d-%H%M%S}"
+    backup, n = base.BACKUP_DIR / stamp, 1
+    while backup.exists():                           # Two changes within one second must not overwrite a backup.
+        n += 1
+        backup = base.BACKUP_DIR / f"{stamp}-{n}"
     shutil.copy2(base.CONFIG_PATH, backup)
     tmp = base.CONFIG_PATH.with_suffix(".tmp")
     tmp.write_text(new_text, encoding="utf-8")

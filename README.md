@@ -44,6 +44,7 @@ With just this bot, you see every important date of your studies.
 | 01:30 · 07:30 · 13:30 · 19:30 | 📬 **Email digest:** new mail sorted into *must act* / *maybe read* / *ignored*, each with its subject and a one-line summary. New ILIAS deadlines get a short message of their own |
 | 19:30 | 💬 **Forum digest:** one sentence per ILIAS thread with new posts |
 | hourly, 07–23 | ⏰ **Urgent reminder** for anything due within 3 hours |
+| new semester | 🎓 **Course check:** a new semester started, or you joined courses on ILIAS that aren't tracked yet; tap the button to pick them |
 | any time | 🤖 **Chat:** ask questions, add to-dos, mark homework as done, change settings |
 
 When nothing is new, it stays quiet.
@@ -65,7 +66,7 @@ Duties get reminders. Chances are only mentioned in the digest, so your reminder
 
 "What's still due this week?" · "I submitted BS sheet 3" · "What did the tutor's email say?" · "What's on tomorrow?" · "Remind me to pay the rent on the 1st" · "Stop showing me LinkedIn mails"
 
-The bot has 19 tools:
+The bot has 21 tools:
 
 | Group | Tools |
 |---|---|
@@ -75,6 +76,8 @@ The bot has 19 tools:
 | Settings | show, change (change needs your confirmation) |
 | Timetable | list, add, remove, plus a combined daily schedule |
 | Forum | recent threads, read a thread |
+| Courses | open the course menu (you tick and save with the buttons yourself) |
+| Language | Chinese / German, switches immediately |
 
 ## Architecture
 
@@ -203,7 +206,13 @@ The unit files assume the user `pi` and the path `/home/pi/mail_digest`. Edit th
 Passwords are typed invisibly and only written to `.env` (`chmod 600`). Nothing is saved until the last question is answered, and Ctrl+C changes nothing.
 To fill in the files by hand instead, copy `config.example.toml` and `.env.example`.
 
-**New semester?** `python3 wizard.py --courses` picks the courses again and leaves every other setting alone.
+### New semester
+
+1. **Join this semester's courses on ILIAS first** (and your Tutorium). The bot only sees courses you have joined on ILIAS; it never signs you up.
+2. Once a day, the first ILIAS check after 07:00 looks at your course list. When a new semester starts, or you joined courses that aren't tracked yet, you get a Telegram message with a **📚 Pick courses** button. Each course is announced once.
+3. Tap it (or send `/courses` any time, or just say "pick my courses again") and the bot sends a checklist. It only contains courses you joined on ILIAS: this semester's, plus the ones you track now. Tap to toggle ✅ / ⬜; nothing changes until you press **Save**. `config.toml` is backed up first, existing courses keep their short names and settings, and new courses are crawled from the next ILIAS check on.
+
+From a terminal: `python3 wizard.py --courses` picks the courses again and leaves every other setting alone.
 To just look at your courses: `python3 ilias_courses.py`.
 
 ## Tests

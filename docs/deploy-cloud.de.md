@@ -105,6 +105,8 @@ docker compose run --rm assistant python3 tests/run_tests.py --no-llm   # Selbst
 docker compose down                                   # stoppen
 ```
 
+**Neues Semester:** Tritt zuerst in ILIAS den Kursen dieses Semesters bei, dann schick dem Bot in Telegram `/courses` und kreuze sie an (der Bot sieht nur Kurse, denen du in ILIAS beigetreten bist). Kein Neustart nötig. Die Zeile `wizard.py --courses` oben macht dasselbe im Terminal.
+
 Zum Sichern reicht der Ordner `data/`.
 
 ## Häufige Probleme

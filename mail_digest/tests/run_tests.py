@@ -1,13 +1,16 @@
 #!/usr/bin/env python3
 """
-机器人自动测试（在树莓派上运行）：python3 tests/run_tests.py [--no-llm]
+Automated bot tests (run on the Raspberry Pi): python3 tests/run_tests.py [--no-llm]
 
-所有会写入的东西都用临时文件夹里的【副本】：deadlines.json、config.toml、todos、课表。
-真实提醒和设置不会被改，也不发 Telegram。邮件、ILIAS 论坛只读。
-  A 部分：直接调用每个工具（0 token）
-  语言：中文 / 德语的固定文字、切换语言、按钮（0 token）
-  B 部分：用一串中文句子测 AI 有没有选对工具，最后测用德语聊天和切换语言（花少量 token）
-测试默认用中文（不管 config.toml 里现在是什么语言），德语的部分单独测。
+Everything that gets written uses COPIES in a temporary folder: deadlines.json, config.toml,
+to-dos, timetable. Real reminders and settings are never changed and nothing is sent to
+Telegram. Mail and ILIAS forums are only read.
+  Part A: call every tool directly (0 tokens)
+  Language: fixed Chinese / German texts, switching language, buttons (0 tokens)
+  Course menu: /courses buttons on a config copy with a fake ILIAS list (0 tokens)
+  Part B: Chinese sentences check that the AI picks the right tools, then German chat and
+          switching language (a few tokens)
+Tests run in Chinese whatever config.toml says; German is tested separately.
 """
 from __future__ import annotations
 
@@ -74,7 +77,7 @@ ALLOWED = {"b", "i", "s", "code", "pre", "a"}
 
 
 def valid_html(s: str) -> bool:
-    """只用 Telegram 认识的标签，而且每个都正确闭合。"""
+    """Only tags Telegram understands, each one properly closed."""
     class P(HTMLParser):
         def __init__(self):
             super().__init__()
@@ -479,12 +482,12 @@ CJK = re.compile(r"[\u4e00-\u9fff\u3000-\u303f\uff01-\uff5e]")    # Chinese char
 
 
 def no_chinese(s: str) -> bool:
-    """德语界面里不能有汉字（选语言按钮上的「中文」两个字除外）。"""
+    """No Chinese characters in the German interface (except the word 中文 on the language button)."""
     return not CJK.search(s.replace("中文", ""))
 
 
 def german(s: str) -> bool:
-    """AI 的回答是不是德语：汉字很少，而且有常见的德语词。"""
+    """Whether an AI reply is German: very few Chinese characters and some common German words."""
     return (len(CJK.findall(s)) <= len(s) * 0.15
             and re.search(r"\b(ich|du|dir|die|der|das|und|ist|sind|noch|nicht|keine?|auf|jetzt|Deutsch)\b",
                           s, re.I) is not None)
@@ -605,6 +608,125 @@ def part_lang() -> None:
     restore_config()
 
 
+# ================================================================ Course menu (Telegram buttons, zero tokens, config copy)
+
+def part_courses() -> None:
+    print("\n========== 选课按钮（0 token，只改配置副本，不连 ILIAS）==========")
+    from unittest.mock import patch
+    import ilias_courses as ic
+    restore_config()
+    orig = tomllib.loads(ORIG_CONFIG)
+    tracked = orig["ilias"]["courses"]
+    sem = ic.current_semester()
+    # Fake ILIAS course list: the tracked courses plus one newly joined course.
+    items = [{"kind": "crs", "ref": int(c["crs"]), "title": c["name"], "name": c["name"],
+              "semester": sem, "current": True} for c in tracked]
+    items.append({"kind": "crs", "ref": 1, "title": "Testkurs", "name": "Testkurs", "semester": sem, "current": True})
+
+    class FakeTG:
+        def __init__(self):
+            self.calls, self.sent = [], []
+
+        def call(self, method, http_timeout=30, **params):
+            self.calls.append((method, params))
+            return {"message_id": 42} if method == "sendMessage" else True
+
+        def send(self, chat_id, text):
+            self.sent.append(text)
+
+    def press(tg, data, message_id=42):
+        cq = {"id": "q", "data": data, "message": {"message_id": message_id, "chat": {"id": 1, "type": "private"}}}
+        bot.on_button(tg, "1", cq, [])
+
+    def keyboard_of(tg, method):
+        p = [p for m, p in tg.calls if m == method][-1]
+        return [[b["text"], b["callback_data"]] for row in p["reply_markup"]["inline_keyboard"] for b in row]
+
+    def courses_now():
+        return tomllib.loads(tools.base.CONFIG_PATH.read_text(encoding="utf-8"))["ilias"]["courses"]
+
+    out = call("courses_menu")
+    check("courses_menu 工具：只是请程序发列表，不改设置", tools.PENDING.pop("courses_menu", None) is True
+          and "程序" in out and tools.base.CONFIG_PATH.read_text(encoding="utf-8") == ORIG_CONFIG, out)
+    check("/courses 在命令菜单和使用说明里（中德）", "courses" in bot.COMMANDS
+          and "/courses" in i18n.TEXTS["bot.help"]["zh"] and "/courses" in i18n.TEXTS["bot.help"]["de"])
+
+    with patch.object(tools.courses, "_with_ilias", lambda fn: items):
+        tg = FakeTG()
+        bot.open_course_menu(tg, "1")
+        kb = keyboard_of(tg, "sendMessage")
+        check("打开列表：先说正在读取；跟踪的课 ✅、新加入的 ⬜；最后一行保存 / 取消",
+              tg.sent == [i18n.tr("cs.loading")] and tools.courses.MENU.get("message_id") == 42
+              and [t[:1] for t, _ in kb[:len(tracked)]] == ["✅"] * len(tracked)
+              and kb[len(tracked)] == ["⬜ Testkurs", "crs:t:1"]
+              and kb[-2:] == [["💾 保存", "crs:save"], ["✖️ 取消", "crs:cancel"]], str(kb))
+
+        press(tg, "crs:t:1")
+        kb = keyboard_of(tg, "editMessageReplyMarkup")
+        check("点一下：切换成 ✅，配置还没变", ["✅ Testkurs", "crs:t:1"] in kb
+              and tools.base.CONFIG_PATH.read_text(encoding="utf-8") == ORIG_CONFIG, str(kb))
+        backups = set(tools.base.BACKUP_DIR.glob("config.toml.*")) if tools.base.BACKUP_DIR.exists() else set()
+        press(tg, "crs:save")
+        cfg = tomllib.loads(tools.base.CONFIG_PATH.read_text(encoding="utf-8"))
+        done = [p["text"] for m, p in tg.calls if m == "editMessageText"]
+        new_backups = set(tools.base.BACKUP_DIR.glob("config.toml.*")) - backups
+        rest_same = ({k: v for k, v in cfg.items() if k != "ilias"} == {k: v for k, v in orig.items() if k != "ilias"}
+                     and {k: v for k, v in cfg["ilias"].items() if k != "courses"}
+                     == {k: v for k, v in orig["ilias"].items() if k != "courses"})
+        check("保存：新课加在最后，原来的课一个字不变，其他设置不变，先备份，机器人马上用上",
+              cfg["ilias"]["courses"] == tracked + [{"name": "Testkurs", "crs": 1}] and rest_same
+              and len(new_backups) == 1 and tools.CFG["ilias"]["courses"] == cfg["ilias"]["courses"]
+              and done and done[-1].startswith("✅ 已保存") and "新加：Testkurs" in done[-1]
+              and not tools.courses.MENU,
+              str([cfg["ilias"]["courses"][-2:], rest_same, len(new_backups),
+                   tools.CFG["ilias"]["courses"] == cfg["ilias"]["courses"], done]))
+
+        tg = FakeTG()
+        press(tg, "crs:t:1")
+        check("旧列表的按钮：提示已过期，什么都不改",
+              ("editMessageText", {"chat_id": "1", "message_id": 42, "text": i18n.tr("cs.expired")}) in tg.calls
+              and courses_now()[-1]["crs"] == 1, str(tg.calls))
+
+        tg = FakeTG()
+        press(tg, "crs:open")                       # Button under the new-semester notice.
+        press(tg, "crs:t:1")
+        press(tg, "crs:save")
+        done = [p["text"] for m, p in tg.calls if m == "editMessageText"]
+        check("通知下面的「选课」按钮能打开列表；取消勾选后保存 = 不再跟踪，课程回到原样",
+              any(m == "sendMessage" for m, _ in tg.calls) and courses_now() == tracked
+              and done and "不再跟踪：Testkurs" in done[-1], str(done))
+
+        tg = FakeTG()
+        bot.open_course_menu(tg, "1")
+        for c in tracked:
+            press(tg, f"crs:t:{c['crs']}")
+        before = tools.base.CONFIG_PATH.read_text(encoding="utf-8")
+        press(tg, "crs:save")
+        check("一门都不选：不让保存，列表还能接着用",
+              tg.sent[-1] == i18n.tr("cs.need_one") and tools.courses.MENU
+              and tools.base.CONFIG_PATH.read_text(encoding="utf-8") == before)
+        press(tg, "crs:cancel")
+        check("取消：配置不变，列表关掉",
+              tg.calls[-1] == ("editMessageText", {"chat_id": "1", "message_id": 42, "text": i18n.tr("cs.cancelled")})
+              and not tools.courses.MENU and tools.base.CONFIG_PATH.read_text(encoding="utf-8") == before)
+
+        tg = FakeTG()
+        bot.open_course_menu(tg, "1")
+        press(tg, "crs:save")
+        check("什么都没改就保存：说没有改动，不写文件",
+              tg.calls[-1][1].get("text") == i18n.tr("cs.unchanged", n=len(tracked))
+              and tools.base.CONFIG_PATH.read_text(encoding="utf-8") == before)
+
+    def offline(fn):
+        raise RuntimeError("ILIAS 连不上")
+    with patch.object(tools.courses, "_with_ilias", offline):
+        tg = FakeTG()
+        bot.open_course_menu(tg, "1")
+        check("ILIAS 连不上：告诉我原因，不发列表", len(tg.sent) == 2 and "ILIAS 连不上" in tg.sent[-1]
+              and not any(m == "sendMessage" for m, _ in tg.calls), str(tg.sent))
+    restore_config()
+
+
 # ================================================================ B: AI tool selection
 CASES = [  # (user message, required tool, follows prior conversation, required reply text)
     ("还有哪些作业没交？", {"ddl_list"}, False, ""),
@@ -623,6 +745,7 @@ CASES = [  # (user message, required tool, follows prior conversation, required 
     ("周一 9:45 到 11:15 有 BS 讲座，在 HS a.m. Fasanengarten", {"timetable_add"}, False, ""),
     ("下周一有什么安排？", {"schedule"}, False, ""),
     ("GKI 论坛最近在讨论什么？", {"forum_recent"}, False, ""),
+    ("新学期开始了，帮我重新选一下要跟踪的课", {"courses_menu"}, False, ""),
     ("以后 Typeless 的邮件都忽略", {"settings_change"}, False, ""),
     ("删掉那个 Summer School 申请的提醒", {"ddl_delete", "settings_change"}, False, ""),
     ("像黑客松这种编程比赛我都不感兴趣，以后别提醒我", {"settings_change"}, False, ""),
@@ -677,6 +800,9 @@ def part_b() -> None:
         if text == "把全部作业和考试都列出来":
             ok = ok and any(c.get("all") for c in lists)
         ok = ok and not re.search(r"#\d|KIT:\d|Gmail:\d|\d{6,}/\d{5,}", reply)   # Do not expose identifiers.
+        if "courses_menu" in need:                      # The program sends the menu; the AI changes nothing.
+            ok = ok and tools.PENDING.get("courses_menu") is True \
+                and tools.base.CONFIG_PATH.read_text(encoding="utf-8") == ORIG_CONFIG
         if "settings_change" in need:
             ok = ok and bool(tools.PENDING.get("settings")) and \
                 tools.base.CONFIG_PATH.read_text(encoding="utf-8") == ORIG_CONFIG
@@ -738,6 +864,7 @@ if __name__ == "__main__":
             part_net()
             part_a()
             part_lang()
+            part_courses()
             if "--no-llm" not in sys.argv:
                 part_b()
     finally:

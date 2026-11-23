@@ -7,14 +7,15 @@
                 language                    language_set (zh / de, applies at once)
   timetable.py  O5 timetable / schedule     timetable_*, schedule
   forum.py      O6 ILIAS forums, read-only  forum_*
+  courses.py    tracked ILIAS courses       courses_menu (AI only opens the menu; the user saves by button)
   base.py       registry, data paths, CFG, PENDING, small parsers
 
 Test a single tool: python3 bot.py --tool NAME '{"arg": "value"}'
 """
 # Import order = order of the tools shown to the AI; keep it stable.
-from . import base, ddl, todo, mail, settings, timetable, forum  # noqa: F401
+from . import base, ddl, todo, mail, settings, timetable, forum, courses  # noqa: F401
 from .base import CFG, PENDING, TOOLS  # noqa: F401
 from .settings import apply_pending, set_language  # noqa: F401
 
-__all__ = ["base", "ddl", "todo", "mail", "settings", "timetable", "forum",
+__all__ = ["base", "ddl", "todo", "mail", "settings", "timetable", "forum", "courses",
            "CFG", "PENDING", "TOOLS", "apply_pending", "set_language"]

@@ -104,6 +104,8 @@ docker compose run --rm assistant python3 tests/run_tests.py --no-llm   # self-t
 docker compose down                                   # stop
 ```
 
+**New semester:** join this semester's courses on ILIAS first, then send `/courses` to the bot in Telegram and tick them (the bot only sees courses you joined on ILIAS). No restart needed. The `wizard.py --courses` line above does the same from a terminal.
+
 Back up the `data/` folder and you have backed up everything.
 
 ## Troubleshooting

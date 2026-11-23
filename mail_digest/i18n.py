@@ -85,6 +85,7 @@ HELP_ZH = """我是你的学习助理 🤖
 
 命令：
 /language  切换语言（中文 / Deutsch）
+/courses  选要跟踪的课（新学期用；只列你在 ILIAS 上加入了的课）
 /new  清空对话记忆（重新开始）
 /usage  看今天和本月花了多少 token
 /help  显示这条说明
@@ -95,6 +96,7 @@ HELP_ZH = """我是你的学习助理 🤖
 • 邮件（最近 7 天，只读）："今天 KIT 有什么邮件"、"那封 Tutorium 的邮件写了啥"
 • 课表："明天有什么课"、"这周的安排"；加课："周一 9:45–11:15 BS 讲座 在 HS a.m. Fasanengarten"
 • 论坛："GKI 论坛最近在讨论什么"
+• 新学期："帮我重新选课"（先在 ILIAS 上加入课，再在我发的列表里点选）
 • 设置："以后 XX 的邮件都忽略"（我会先给你看改动，你回复「确认」才改）
 • 不感兴趣："像 XX 这种我不感兴趣"（记进自我介绍，以后这类邮件不加提醒）"""
 
@@ -103,6 +105,7 @@ Schreib mir einfach auf Deutsch.
 
 Befehle:
 /language  Sprache wechseln (中文 / Deutsch)
+/courses  Verfolgte Kurse wählen (fürs neue Semester; nur Kurse, denen du in ILIAS beigetreten bist)
 /new  Gesprächsverlauf löschen (neu anfangen)
 /usage  Token-Verbrauch heute und in diesem Monat
 /help  Diese Hilfe anzeigen
@@ -113,6 +116,7 @@ Du kannst mir zum Beispiel schreiben:
 • Mails (letzte 7 Tage, nur lesen): „Welche KIT-Mails kamen heute?“, „Was steht in der Tutorium-Mail?“
 • Stundenplan: „Was habe ich morgen?“, „Was steht diese Woche an?“; Kurs eintragen: „Montag 9:45–11:15 BS Vorlesung im HS a.m. Fasanengarten“
 • Forum: „Worüber wird im GKI-Forum gerade diskutiert?“
+• Neues Semester: „Kurse neu wählen“ (erst in ILIAS den Kursen beitreten, dann in meiner Liste antippen)
 • Einstellungen: „Mails von XX künftig ignorieren“ (ich zeige dir erst die Änderung, sie gilt erst nach deinem „ja“)
 • Kein Interesse: „So etwas wie XX interessiert mich nicht“ (kommt in dein Profil, solche Mails bekommen dann keine Erinnerung mehr)"""
 
@@ -163,6 +167,7 @@ TEXTS: dict[str, dict[str, str]] = {
     # Descriptions for the Telegram slash-command menu.
     "cmd.start": {"zh": "开始 / 选择语言", "de": "Start / Sprache wählen"},
     "cmd.language": {"zh": "切换语言（中文 / Deutsch）", "de": "Sprache wechseln (中文 / Deutsch)"},
+    "cmd.courses": {"zh": "选要跟踪的课（新学期）", "de": "Verfolgte Kurse wählen (neues Semester)"},
     "cmd.new": {"zh": "清空对话记忆", "de": "Gesprächsverlauf löschen"},
     "cmd.usage": {"zh": "今天和本月的 token 用量", "de": "Token-Verbrauch heute / diesen Monat"},
     "cmd.help": {"zh": "使用说明", "de": "Hilfe"},
@@ -270,6 +275,48 @@ TEXTS: dict[str, dict[str, str]] = {
     "ic.current": {"zh": "（这学期）", "de": " (dieses Semester)"},
     "ic.lost": {"zh": "其他 Tutorium（没找到属于哪门课，或者是往届的）",
                 "de": "Weitere Tutorien (Kurs nicht gefunden oder aus früheren Semestern)"},
+
+    # ---- Course menu (bot /courses, tools/courses.py) and new-semester notice (ilias_sync.py)
+    "cs.loading": {"zh": "⏳ 正在读取你在 ILIAS 上加入的课（大约 10 秒）…",
+                   "de": "⏳ Ich lese deine ILIAS-Kurse (ca. 10 Sekunden) …"},
+    "cs.failed": {"zh": "⚠️ 读不到 ILIAS 上的课程列表：{err}",
+                  "de": "⚠️ Ich konnte deine ILIAS-Kursliste nicht lesen: {err}"},
+    "cs.menu": {"zh": "📚 选要跟踪的课\n"
+                      "这里只有你在 ILIAS 上已经加入的课：这学期的课，加上现在正在跟踪的课。"
+                      "点一下切换 ✅ / ⬜，选好后点「保存」。\n"
+                      "找不到某门课？先在 ILIAS 上加入它，再发 /courses。",
+                "de": "📚 Kurse zum Verfolgen wählen\n"
+                      "Hier stehen nur Kurse, denen du in ILIAS schon beigetreten bist: die dieses Semesters "
+                      "und die, die ich gerade verfolge. Tippe zum Umschalten ✅ / ⬜, dann auf „Speichern“.\n"
+                      "Ein Kurs fehlt? Tritt ihm zuerst in ILIAS bei und schick dann /courses."},
+    "cs.save": {"zh": "💾 保存", "de": "💾 Speichern"},
+    "cs.cancel": {"zh": "✖️ 取消", "de": "✖️ Abbrechen"},
+    "cs.gone": {"zh": "ILIAS 上找不到了", "de": "nicht mehr in ILIAS"},
+    "cs.need_one": {"zh": "至少要选一门课才能保存。", "de": "Wähle mindestens einen Kurs, um zu speichern."},
+    "cs.expired": {"zh": "这个选课列表已经过期了，请发 /courses 重新打开。",
+                   "de": "Diese Kursliste ist abgelaufen, bitte schick /courses für eine neue."},
+    "cs.cancelled": {"zh": "已取消，跟踪的课没有变。", "de": "Abgebrochen, die verfolgten Kurse bleiben gleich."},
+    "cs.unchanged": {"zh": "没有改动，还是跟踪原来那 {n} 门课。",
+                     "de": "Nichts geändert, ich verfolge weiter dieselben {n} Kurse."},
+    "cs.saved": {"zh": "✅ 已保存，现在跟踪 {n} 门课。{changes}\n新课的作业和论坛从下一次 ILIAS 检查开始抓取。",
+                 "de": "✅ Gespeichert, ich verfolge jetzt {n} Kurse.{changes}\n"
+                       "Abgaben und Forum neuer Kurse hole ich ab der nächsten ILIAS-Prüfung."},
+    "cs.added": {"zh": "\n新加：{names}", "de": "\nNeu: {names}"},
+    "cs.removed": {"zh": "\n不再跟踪：{names}", "de": "\nNicht mehr verfolgt: {names}"},
+    "cs.sep": {"zh": "、", "de": ", "},
+    "cs.open": {"zh": "📚 选课", "de": "📚 Kurse wählen"},
+    "cs.new_sem": {"zh": "🎓 新学期 {sem} 开始了！", "de": "🎓 Das Semester {sem} hat begonnen!"},
+    "cs.join_first": {"zh": "先在 ILIAS 上加入这学期的课：我只能看到你在 ILIAS 上加入了的课。"
+                            "加入以后我会提醒你，也可以随时点下面的按钮或发 /courses 选要跟踪的课。",
+                      "de": "Tritt zuerst in ILIAS den Kursen dieses Semesters bei – ich sehe nur Kurse, denen du "
+                            "dort beigetreten bist. Danach sage ich dir Bescheid; du kannst auch jederzeit unten "
+                            "tippen oder /courses schicken."},
+    "cs.found": {"zh": "ILIAS 上你已经加入了 {n} 门这学期的课，还没跟踪：",
+                 "de": "Du bist in ILIAS {n} Kursen dieses Semesters beigetreten, die ich noch nicht verfolge:"},
+    "cs.found_more": {"zh": "🆕 ILIAS 上你又加入了 {n} 门这学期的课，还没跟踪：",
+                      "de": "🆕 Du bist in ILIAS {n} weiteren Kursen dieses Semesters beigetreten, "
+                            "die ich noch nicht verfolge:"},
+    "cs.pick_hint": {"zh": "点下面的按钮选要跟踪的课。", "de": "Tippe unten, um die Kurse auszuwählen."},
 
     # ---- wizard.py (setup wizard): tr("hello") in wizard.py resolves to "su.hello" here.
     "su.hello": {"zh": "👋 KIT 学习助理 · 安装向导\n"

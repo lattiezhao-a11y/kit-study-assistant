@@ -99,6 +99,8 @@ docker compose run --rm assistant python3 tests/run_tests.py --no-llm   # 自检
 docker compose down                                   # 停止
 ```
 
+**新学期**：先在 ILIAS 上加入这学期的课，然后在 Telegram 里发 `/courses` 点选就行（机器人只看得到你在 ILIAS 上加入了的课），不用重启。上面那行 `wizard.py --courses` 是在终端里做同一件事。
+
 备份的话，备份 `data/` 文件夹就够了。
 
 ## 常见问题

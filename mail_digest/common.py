@@ -71,8 +71,9 @@ def strip_tags(fragment: str) -> str:
 
 # ---------------------------------------------------------------- Telegram
 
-def send_telegram(text: str, cfg: dict) -> None:
-    """Push an HTML message to the owner's chat; cfg is the [telegram] section."""
+def send_telegram(text: str, cfg: dict, reply_markup: dict | None = None) -> None:
+    """Push an HTML message to the owner's chat; cfg is the [telegram] section.
+    reply_markup (buttons) is attached to the last part of a long message."""
     token = secret(cfg["bot_token_env"])
     chat_id = secret(cfg["chat_id_env"])
     url = f"https://api.telegram.org/bot{token}/sendMessage"
@@ -84,9 +85,12 @@ def send_telegram(text: str, cfg: dict) -> None:
         cur += line + "\n"
     if cur.strip():
         chunks.append(cur)
-    for chunk in chunks:
-        body = json.dumps({"chat_id": chat_id, "text": chunk, "parse_mode": "HTML",
-                           "disable_web_page_preview": True}).encode("utf-8")
+    for i, chunk in enumerate(chunks):
+        payload = {"chat_id": chat_id, "text": chunk, "parse_mode": "HTML",
+                   "disable_web_page_preview": True}
+        if reply_markup and i == len(chunks) - 1:
+            payload["reply_markup"] = reply_markup
+        body = json.dumps(payload).encode("utf-8")
         req = urllib.request.Request(url, data=body,
                                      headers={"Content-Type": "application/json"})
         with urllib.request.urlopen(req, timeout=30) as r:

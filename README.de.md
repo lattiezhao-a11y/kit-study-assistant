@@ -44,6 +44,7 @@ Mit nur diesem Bot siehst du alle wichtigen Termine deines Studiums.
 | 01:30 · 07:30 · 13:30 · 19:30 | 📬 **Mail-Zusammenfassung:** neue Mails, sortiert in *Zu erledigen* / *Lesenswert* / *Ignoriert*, jeweils mit Betreff und einem Satz Zusammenfassung. Neue ILIAS-Fristen bekommen eine eigene kurze Nachricht |
 | 19:30 | 💬 **Forum-Zusammenfassung:** ein Satz pro ILIAS-Thread mit neuen Beiträgen |
 | stündlich, 07–23 Uhr | ⏰ **Dringende Erinnerung** für alles, was in weniger als 3 Stunden fällig ist |
+| neues Semester | 🎓 **Kurs-Check:** ein neues Semester hat begonnen oder du bist in ILIAS Kursen beigetreten, die noch nicht verfolgt werden; ein Tipp auf den Button, und du wählst sie aus |
 | jederzeit | 🤖 **Chat:** Fragen stellen, To-dos eintragen, Abgaben als erledigt markieren, Einstellungen ändern |
 
 Gibt es nichts Neues, bleibt er still.
@@ -65,7 +66,7 @@ Pflichten bekommen Erinnerungen. Chancen werden nur in der Zusammenfassung erwä
 
 „Was ist diese Woche noch offen?“ · „BS-Blatt 3 ist abgegeben“ · „Was stand in der Mail vom Tutor?“ · „Was steht morgen an?“ · „Erinner mich am 1. an die Miete“ · „Zeig mir keine LinkedIn-Mails mehr“
 
-Der Bot hat 19 Werkzeuge:
+Der Bot hat 21 Werkzeuge:
 
 | Bereich | Werkzeuge |
 |---|---|
@@ -75,6 +76,8 @@ Der Bot hat 19 Werkzeuge:
 | Einstellungen | anzeigen, ändern (Änderungen musst du bestätigen) |
 | Stundenplan | anzeigen, hinzufügen, entfernen, dazu ein kombinierter Tagesplan |
 | Forum | neueste Threads, einen Thread lesen |
+| Kurse | Kursliste öffnen (ankreuzen und speichern machst du selbst per Button) |
+| Sprache | Chinesisch / Deutsch, sofort umgeschaltet |
 
 ## Aufbau
 
@@ -203,7 +206,13 @@ Die Unit-Dateien gehen vom Benutzer `pi` und dem Pfad `/home/pi/mail_digest` aus
 Passwörter werden unsichtbar eingegeben und nur in `.env` geschrieben (`chmod 600`). Gespeichert wird erst nach der letzten Frage, und Strg+C ändert nichts.
 Lieber von Hand ausfüllen? Dann `config.example.toml` und `.env.example` kopieren.
 
-**Neues Semester?** `python3 wizard.py --courses` wählt die Kurse neu und lässt alle anderen Einstellungen in Ruhe.
+### Neues Semester
+
+1. **Tritt zuerst in ILIAS den Kursen dieses Semesters bei** (und deinem Tutorium). Der Bot sieht nur Kurse, denen du in ILIAS beigetreten bist; er meldet dich nirgends an.
+2. Einmal am Tag schaut die erste ILIAS-Prüfung nach 07:00 auf deine Kursliste. Hat ein neues Semester begonnen oder bist du Kursen beigetreten, die noch nicht verfolgt werden, bekommst du eine Telegram-Nachricht mit dem Button **📚 Kurse wählen**. Jeder Kurs wird nur einmal gemeldet.
+3. Tipp darauf (oder schick jederzeit `/courses`, oder schreib einfach „Kurse neu wählen“), dann schickt der Bot eine Liste zum Ankreuzen. Darin stehen nur Kurse, denen du in ILIAS beigetreten bist: die dieses Semesters und die, die gerade verfolgt werden. Antippen schaltet ✅ / ⬜ um; erst **Speichern** ändert etwas. Vorher wird `config.toml` gesichert, bisherige Kurse behalten Kurznamen und Einstellungen, neue Kurse werden ab der nächsten ILIAS-Prüfung abgefragt.
+
+Im Terminal geht es auch: `python3 wizard.py --courses` wählt die Kurse neu und lässt alle anderen Einstellungen in Ruhe.
 Nur deine Kurse ansehen: `python3 ilias_courses.py`.
 
 ## Tests

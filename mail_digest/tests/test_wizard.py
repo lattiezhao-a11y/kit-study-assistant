@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
 """
-安装向导 + 课程列表的测试：不联网、不需要账号、0 token（GitHub Actions 里也跑）
+Tests for the setup wizard, the course list, the course menu and the new-semester notice:
+no network, no account, 0 tokens (also run by GitHub Actions).
 
   python3 tests/test_wizard.py
 
-测试数据全是编的，不含真实课程编号和人名。
+All test data is made up: no real course IDs or names of people.
 """
 from __future__ import annotations
 
@@ -203,6 +204,70 @@ def part_pieces() -> None:
           and len(cfg["ilias"]["manual"]) == 1)
 
 
+def part_menu() -> None:
+    print("\n========== Telegram 选课 + 新学期提醒的零件（ilias_courses.py）==========")
+    i18n.LANG = "zh"
+    items = ic.my_courses(FakeIlias(), today=dt.date(2026, 11, 23))
+    name_of = {c["ref"]: c["name"] for c in items if c["kind"] == "crs"}
+    existing = {600003: {"name": "Seminar", "crs": 600003, "read_pages": False},
+                500002: {"name": "Krypto", "crs": 500002},
+                123: {"name": "Alt", "crs": 123}}
+    ch = ic.menu_choices(items, existing)
+    check("选课列表：先列在跟踪的（用简称），再列这学期还没跟踪的；往届的标出学期；ILIAS 上没有了的排最后",
+          [(c["ref"], c["name"], c["note"]) for c in ch]
+          == [(600003, "Seminar", ""), (500002, "Krypto", "SS 2026"),
+              (600001, name_of[600001], ""), (600002, name_of[600002], ""),
+              (123, "Alt", i18n.tr("cs.gone"))], str(ch))
+
+    chosen = ic.merge_courses(items, existing, [600001, 600003, 600002])
+    check("保存选课：原来的课排前面、设置不变；新课用 ILIAS 课名、自动带上 Tutorium；没选的去掉",
+          chosen == [{"name": "Seminar", "crs": 600003, "read_pages": False},
+                     {"name": name_of[600001], "crs": 600001, "groups": [900001]},
+                     {"name": name_of[600002], "crs": 600002}], str(chosen))
+
+    state: dict = {}
+    first = ic.semester_news(items, {600003}, state, dt.date(2026, 11, 23))
+    check("第一次检查只记下现状，不提醒（故意没跟踪的课不会被拿出来）",
+          first is None and state == {"courses_offered": [600001, 600002], "semester_announced": "WS 26/27"},
+          str(state))
+    check("没有新课：不提醒", ic.semester_news(items, {600003}, state, dt.date(2026, 11, 24)) is None)
+    joined = items + [{"kind": "crs", "ref": 600004, "title": "Robotik & KI", "name": "Robotik & KI",
+                       "semester": (2026, 2), "current": True}]
+    news = ic.semester_news(joined, {600003}, state, dt.date(2026, 11, 25))
+    text = ic.format_news(news or {"semester": "", "new_semester": False, "courses": []})
+    check("这学期又加入了一门课：提醒一次，只列这门，课名转义",
+          news == {"semester": "WS 26/27", "new_semester": False, "courses": ["Robotik & KI"]}
+          and "又加入了 1 门" in text and "Robotik &amp; KI" in text and "新学期" not in text, text)
+    check("同一门课不会再提醒第二次", ic.semester_news(joined, {600003}, state, dt.date(2026, 11, 26)) is None)
+
+    spring = [{"kind": "crs", "ref": 700001, "title": "Analysis", "name": "Analysis", "semester": (2027, 1),
+               "current": True}]
+    s2 = dict(state)
+    news = ic.semester_news([], {600003}, s2, dt.date(2027, 4, 1))
+    text = ic.format_news(news or {"semester": "", "new_semester": False, "courses": []})
+    check("新学期第一天还没加入课：提醒「新学期开始了，先在 ILIAS 上加入课」",
+          news == {"semester": "SS 2027", "new_semester": True, "courses": []}
+          and "新学期 SS 2027 开始了" in text and "先在 ILIAS 上加入" in text, text)
+    news = ic.semester_news(spring, {600003}, s2, dt.date(2027, 4, 20))
+    check("之后在 ILIAS 加入了新课：再提醒一次（不再说新学期开始）",
+          news == {"semester": "SS 2027", "new_semester": False, "courses": ["Analysis"]}, str(news))
+    s3 = dict(state)
+    news = ic.semester_news(spring, {600003}, s3, dt.date(2027, 4, 2))
+    text = ic.format_news(news or {"semester": "", "new_semester": False, "courses": []})
+    check("新学期开始时已经加入了课：一条消息里既说新学期又列出新课",
+          news == {"semester": "SS 2027", "new_semester": True, "courses": ["Analysis"]}
+          and "开始了" in text and "• Analysis" in text and "点下面的按钮" in text, text)
+    btn = ic.open_button()["inline_keyboard"][0][0]
+    check("提醒下面带「选课」按钮", btn == {"text": "📚 选课", "callback_data": "crs:open"}, str(btn))
+    i18n.LANG = "de"
+    try:
+        text = ic.format_news({"semester": "SS 2027", "new_semester": True, "courses": ["Analysis"]})
+        btn = ic.open_button()["inline_keyboard"][0][0]["text"]
+        check("德语提醒和按钮：没有中文", not CJK.search(text + btn) and "Semester SS 2027" in text, text)
+    finally:
+        i18n.LANG = "zh"
+
+
 def part_flow() -> None:
     print("\n========== 完整走一遍向导（--no-check，用编好的回答）==========")
     with tempfile.TemporaryDirectory() as d:
@@ -315,7 +380,7 @@ def part_german() -> None:
 if __name__ == "__main__":
     if hasattr(sys.stdout, "reconfigure"):
         sys.stdout.reconfigure(encoding="utf-8")
-    for part in (part_courses, part_pieces, part_flow, part_german):
+    for part in (part_courses, part_pieces, part_menu, part_flow, part_german):
         try:
             part()
         except Exception:

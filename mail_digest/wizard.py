@@ -24,6 +24,8 @@ from pathlib import Path
 import i18n
 import mail_imap
 from common import DATA
+from ilias_courses import merge_courses, render_courses, replace_courses  # noqa: F401
+from ilias_courses import toml_value as q
 
 HERE = Path(__file__).resolve().parent
 CONFIG = DATA / "config.toml"
@@ -172,32 +174,6 @@ def wait_for_chat(token: str, seconds: int = 120) -> int | None:
 
 # ---------------------------------------------------------------- Write configuration
 
-def q(v) -> str:
-    """Convert a Python value to TOML; TOML accepts JSON string notation."""
-    if isinstance(v, bool):
-        return "true" if v else "false"
-    if isinstance(v, (int, float)):
-        return str(v)
-    if isinstance(v, str):
-        return json.dumps(v, ensure_ascii=False)
-    if isinstance(v, (list, tuple)):
-        return "[" + ", ".join(q(x) for x in v) + "]"
-    raise TypeError(type(v))
-
-
-def render_courses(courses: list[dict]) -> str:
-    out = []
-    for c in courses:
-        lines = ["[[ilias.courses]]", f"name = {q(c['name'])}", f"crs = {int(c['crs'])}"]
-        if c.get("groups"):
-            lines.append(f"groups = {q([int(g) for g in c['groups']])}")
-        for k, v in c.items():                         # Preserve other existing settings such as read_pages.
-            if k not in ("name", "crs", "groups"):
-                lines.append(f"{k} = {q(v)}")
-        out.append("\n".join(lines))
-    return "\n\n".join(out) + ("\n" if out else "")
-
-
 def render_config(a: dict, example: dict) -> str:
     """Render wizard answers as config.toml, using config.example.toml defaults for unasked settings."""
     g, llm, ilias = example["general"], example["llm"], example["ilias"]
@@ -266,50 +242,6 @@ def render_env(v: dict) -> str:
     return "\n".join(lines) + "\n"
 
 
-def replace_courses(text: str, courses: list[dict]) -> str:
-    """Replace every [[ilias.courses]] block while preserving all other config text, including comments."""
-    lines = text.splitlines(keepends=True)
-    out: list[str] = []
-    block: list[str] | None = None        # Course block currently being skipped.
-    insert_at: int | None = None
-
-    def end_block() -> None:
-        # Comments and blank lines after a course block belong to the following block, so preserve them.
-        keep = []
-        while block and (not block[-1].strip() or block[-1].lstrip().startswith("#")):
-            keep.insert(0, block.pop())
-        out.extend(keep)
-
-    for line in lines:
-        s = line.strip()
-        if s.startswith("["):
-            if block is not None:
-                end_block()
-                block = None
-            if s.replace(" ", "") == "[[ilias.courses]]":
-                if insert_at is None:
-                    insert_at = len(out)
-                block = []
-                continue
-        if block is not None:
-            block.append(line)
-        else:
-            out.append(line)
-    if block is not None:
-        end_block()
-    new = render_courses(courses)
-    if insert_at is None:
-        if out and not out[-1].endswith("\n"):
-            out.append("\n")
-        out.append("\n" + new)
-    else:
-        out.insert(insert_at, new + ("\n" if courses else ""))
-    result = "".join(out)
-    result = re.sub(r"\n{3,}", "\n\n", result)
-    tomllib.loads(result)                  # Fail here for invalid output before saving it.
-    return result
-
-
 def backup(path: Path) -> Path | None:
     if not path.exists():
         return None
@@ -369,22 +301,15 @@ def choose_courses(items: list[dict], existing: dict[int, dict]) -> list[dict]:
         print(tr("bad_choice"))
     groups = groups_by_course(items)
     group_titles = {g["ref"]: g["title"] for g in items if g["kind"] == "grp"}
-    chosen = []
+    names = {}
     for i in picked:
         c = shown[i - 1]
-        old = dict(existing.get(c["ref"], {}))
-        name = ask(tr("c.name", title=c["title"]), default=old.get("name") or c["name"])
-        entry = {**old, "name": name, "crs": c["ref"]}
+        old = existing.get(c["ref"], {})
+        names[c["ref"]] = ask(tr("c.name", title=c["title"]), default=old.get("name") or c["name"])
         g = groups.get(c["ref"]) or old.get("groups") or []
         if g:
-            entry["groups"] = g
             print(tr("c.groups", g=tr("c.sep").join(group_titles.get(x, str(x)) for x in g)))
-        else:
-            entry.pop("groups", None)
-        chosen.append(entry)
-    # Keep existing courses in order and append new ones, leaving the file unchanged when nothing changed.
-    order = list(existing)
-    chosen.sort(key=lambda e: order.index(e["crs"]) if e["crs"] in order else len(order))
+    chosen = merge_courses(items, existing, [shown[i - 1]["ref"] for i in picked], names)
     print(tr("c.chosen", n=len(chosen)))
     return chosen
 
@@ -584,7 +509,7 @@ def run_courses(check: bool) -> int:
     if not CONFIG.exists():
         print(tr("w.no_config"))
         return 1
-    from digest import load_env, secret
+    from common import load_env, secret
     text = CONFIG.read_text(encoding="utf-8")
     cfg = tomllib.loads(text)
     i18n.use(cfg)

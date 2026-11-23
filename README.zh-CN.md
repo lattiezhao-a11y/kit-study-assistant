@@ -84,9 +84,7 @@ AI 拿不准的时候放进"可以看看"，不放"忽略"。
 git clone https://github.com/lattiezhao-a11y/kit-study-assistant.git
 cd kit-study-assistant
 mkdir data
-cp mail_digest/config.example.toml data/config.toml
-cp mail_digest/.env.example data/.env && chmod 600 data/.env
-# 填好 data/.env 和 data/config.toml，然后：
+docker compose run --rm assistant python3 setup.py              # 安装向导，大约 5 分钟
 docker compose run --rm assistant python3 digest.py --dry-run   # 试运行，不发任何消息
 docker compose up -d                                            # 正式启动
 ```
@@ -104,8 +102,7 @@ sudo apt install poppler-utils
 git clone https://github.com/lattiezhao-a11y/kit-study-assistant.git
 cd kit-study-assistant/mail_digest
 
-cp .env.example .env && chmod 600 .env       # 密码、token、日历订阅链接
-cp config.example.toml config.toml           # 邮箱、课程、偏好设置
+python3 setup.py                             # 安装向导：生成 config.toml 和 .env
 
 python3 digest.py --dry-run --no-llm         # 读邮件，只打印：不调 AI，不发 Telegram
 python3 digest.py --dry-run                  # 调 AI，但还是只打印
@@ -125,11 +122,27 @@ sudo systemctl enable --now mail-digest.timer morning-summary.timer remind.timer
 **Gmail** 要先开两步验证，再生成[应用专用密码](https://myaccount.google.com/apppasswords)。
 **Hotmail** 已经不能用密码登录 IMAP 了，可以设置自动转发到 Gmail。
 
+### 安装向导
+
+`setup.py` 一次问一个问题，每填一项马上检查：
+
+- **KIT 账号**：当场只读地登录 ILIAS 和 KIT 邮箱，输错了马上知道
+- **课程**：**登录 ILIAS 列出你加入的所有课程**，按学期分组，这学期的课已经帮你勾好。你的 Tutorium 会自动对到对应的课，不用再去网址里抄课程编号
+- **AI 的 key**：用 `/models` 接口检查，不花 token
+- **Telegram**：你给机器人发一句话，向导自己找到你的 chat ID
+
+密码输入时不显示，只写进 `.env`（权限 600）。所有问题答完才保存；中途按 Ctrl+C 什么都不会改。
+想自己手动填也可以：复制 `config.example.toml` 和 `.env.example`。
+
+**新学期**：`python3 setup.py --courses` 只重新选课程，其他设置不动。
+只想看看自己有哪些课：`python3 ilias_courses.py`。
+
 ## 测试
 
 ```bash
 python3 tests/run_tests.py            # 约 60 项检查，约 $0.05
 python3 tests/run_tests.py --no-llm   # 只测工具，0 token
+python3 tests/test_setup.py           # 安装向导 + 课程列表，不联网，0 token
 ```
 
 测试全部用数据的临时副本：不会改动真实的作业和设置，也不会发 Telegram。
@@ -139,7 +152,7 @@ A 部分直接测每个工具。B 部分用约 20 句话测试 AI：有没有选
 
 - **ILIAS 登录只支持 KIT**（通过 `idp.scc.kit.edu`，不支持两步验证）。邮件部分任何 IMAP 邮箱都能用。
 - **机器人和所有消息都是中文**，提示词在代码里，想翻译也很容易。
-- **大部分测试需要真实的 `config.toml` 和邮箱**。GitHub 上的自动测试只负责构建 Docker 镜像，并跑不需要账号的那部分（格式、数据文件夹、调度器）。
+- **大部分测试需要真实的 `config.toml` 和邮箱**。GitHub 上的自动测试只负责构建 Docker 镜像，并跑不需要账号的那部分（格式、数据文件夹、调度器、安装向导）。
 - **打开论坛讨论串，ILIAS 会把帖子标成已读**，这是 ILIAS 本身的规则。除此之外，程序在 ILIAS 里不改任何东西。
 - 不用 Docker 的话，只能在 Linux/macOS 上运行（用到了 `fcntl`）；Windows 用户请用 Docker。
 
@@ -147,7 +160,8 @@ A 部分直接测每个工具。B 部分用约 20 句话测试 AI：有没有选
 
 - [x] Docker + 云服务器部署教程，没有树莓派也能用
 - [ ] ILIAS 网址和登录方式可以配置，让别的学校也能用
-- [ ] 安装向导（`setup.py`）：一问一答，生成 `config.toml` 和 `.env`
+- [x] 安装向导（`setup.py`）：自动列出你的 ILIAS 课程、自动找到 Telegram chat ID
+- [ ] 德语版安装向导
 - [x] GitHub 自动测试：构建 Docker 镜像 + 不需要账号的测试
 - [ ] 用假的邮箱和 ILIAS 页面做测试数据，让所有工具都能在 GitHub 上测
 - [ ] 截止时间提取的准确率评测

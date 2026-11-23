@@ -42,24 +42,27 @@ sudo usermod -aG docker $USER
 docker compose version
 ```
 
-## 3. 下载代码，填写自己的设置
+## 3. 下载代码，运行安装向导
+
+先准备好：KIT 账号和密码、一个 AI 的 API key（[DeepSeek](https://platform.deepseek.com/api_keys) 很便宜）、
+一个 Telegram 机器人的 token（在 Telegram 里找 [@BotFather](https://t.me/BotFather)，发 `/newbot`）。
 
 ```bash
 git clone https://github.com/lattiezhao-a11y/kit-study-assistant.git
 cd kit-study-assistant
 mkdir data
-cp mail_digest/config.example.toml data/config.toml
-cp mail_digest/.env.example data/.env && chmod 600 data/.env
-nano data/.env          # 密码、Telegram 的 token 和 chat ID、AI 的 API key
-nano data/config.toml   # KIT 账号、邮箱、课程
+docker compose build
+docker compose run --rm assistant python3 setup.py
 ```
+
+向导会登录 ILIAS 列出你的课程，这学期的已经勾好；每个密码填完马上检查；你给机器人发一句话，它就自动找到你的 chat ID。
+大约 5 分钟，最后一个问题答完才保存。（想自己手动填：把 `mail_digest/config.example.toml` 复制成 `data/config.toml`，`mail_digest/.env.example` 复制成 `data/.env`。）
 
 属于你自己的东西都在 `data/` 里：设置、密码，以及程序运行时生成的文件（`deadlines.json` 等）。代码文件夹不会被改动，所以更新代码很安全。
 
 ## 4. 先试运行（不发任何消息）
 
 ```bash
-docker compose build
 docker compose run --rm assistant python3 digest.py --dry-run --no-llm   # 能不能读到邮件
 docker compose run --rm assistant python3 digest.py --dry-run            # 加上 AI 分类
 docker compose run --rm assistant python3 ilias_sync.py --dry-run        # ILIAS 截止时间
@@ -90,6 +93,7 @@ docker compose logs -f      # 看它在做什么（按 Ctrl+C 退出查看，程
 ```bash
 docker compose logs -f --tail 100                     # 看最近的日志
 docker compose restart                                # 改了 data/config.toml 或 data/.env 之后
+docker compose run --rm assistant python3 setup.py --courses && docker compose restart   # 新学期：重新选课程
 git pull && docker compose up -d --build              # 更新到最新版本
 docker compose run --rm assistant python3 tests/run_tests.py --no-llm   # 自检，0 token
 docker compose down                                   # 停止

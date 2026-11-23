@@ -44,17 +44,22 @@ sudo usermod -aG docker $USER
 docker compose version
 ```
 
-## 3. Get the code and fill in your settings
+## 3. Get the code and run the setup wizard
+
+Have these ready: your KIT account and password, an LLM API key ([DeepSeek](https://platform.deepseek.com/api_keys) is cheap),
+and a Telegram bot token (in Telegram, message [@BotFather](https://t.me/BotFather) and send `/newbot`).
 
 ```bash
 git clone https://github.com/lattiezhao-a11y/kit-study-assistant.git
 cd kit-study-assistant
 mkdir data
-cp mail_digest/config.example.toml data/config.toml
-cp mail_digest/.env.example data/.env && chmod 600 data/.env
-nano data/.env          # passwords, Telegram token and chat ID, LLM API key
-nano data/config.toml   # your KIT account, mailboxes, courses
+docker compose build
+docker compose run --rm assistant python3 setup.py
 ```
+
+The wizard logs in to ILIAS and lists your courses, with this semester's already selected. It checks every password right away,
+and finds your Telegram chat ID once you send your bot a message. It takes about 5 minutes. Nothing is saved before the last question.
+(Prefer editing by hand? Copy `mail_digest/config.example.toml` to `data/config.toml` and `mail_digest/.env.example` to `data/.env`.)
 
 Everything that is yours lives in `data/`: your settings, your passwords and the files the program creates (`deadlines.json` …).
 The code folder never changes, so updating is safe.
@@ -62,7 +67,6 @@ The code folder never changes, so updating is safe.
 ## 4. Test first (nothing is sent)
 
 ```bash
-docker compose build
 docker compose run --rm assistant python3 digest.py --dry-run --no-llm   # can it read your mail?
 docker compose run --rm assistant python3 digest.py --dry-run            # with AI classification
 docker compose run --rm assistant python3 ilias_sync.py --dry-run        # ILIAS deadlines
@@ -94,6 +98,7 @@ Only want the reminders, without the chat bot? Uncomment the `command:` line in 
 ```bash
 docker compose logs -f --tail 100                     # recent log
 docker compose restart                                # after editing data/config.toml or data/.env
+docker compose run --rm assistant python3 setup.py --courses && docker compose restart   # new semester: pick courses again
 git pull && docker compose up -d --build              # update to the newest version
 docker compose run --rm assistant python3 tests/run_tests.py --no-llm   # self-test, 0 tokens
 docker compose down                                   # stop

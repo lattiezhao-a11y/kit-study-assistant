@@ -45,7 +45,7 @@ tools.BACKUP_DIR = TMP / "backup"
 # 副本统一从中文开始（用户在 Telegram 里选了德语也一样），切换语言的测试才有意义
 _cfg_text = tools.CONFIG_PATH.read_text(encoding="utf-8")
 tools.CONFIG_PATH.write_text(re.sub(r'(?m)^language\s*=\s*"[^"]*"', 'language = "zh"', _cfg_text), encoding="utf-8")
-CFG =tomllib.loads(tools.CONFIG_PATH.read_text(encoding="utf-8"))
+CFG = tomllib.loads(tools.CONFIG_PATH.read_text(encoding="utf-8"))
 tools.CFG.update(CFG)
 ORIG_CONFIG = tools.CONFIG_PATH.read_text(encoding="utf-8")
 i18n.LANG = "zh"                 # 下面的检查按中文写；德语在 part_lang 里单独测

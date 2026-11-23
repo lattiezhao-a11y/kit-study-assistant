@@ -7,6 +7,7 @@
   O4 设置            settings_*   （AI 只能"提议"，你回复「确认」后由程序改，改之前先备份）
   O5 课表 / 日程      timetable_*、schedule
   O6 ILIAS 论坛      forum_*      （只读）
+  语言              language_set （中文 / 德语，马上生效，不用确认）
 
 单独测试：python3 bot.py --tool 工具名 '{"参数": "值"}'
 """
@@ -26,12 +27,14 @@ import urllib.request
 from pathlib import Path
 
 import forums as forums_mod
+import i18n
 import ilias_sync
 from digest import DATA, QUOTE_START, body_text, imap_date, secret
+from i18n import tr
 
 HERE = Path(__file__).resolve().parent
 TZ = ilias_sync.TZ
-WEEKDAYS = "一二三四五六日"
+WEEKDAYS = "一二三四五六日"     # 课表工具的结果里用（给 AI 看）；日期显示见 i18n.day_label
 TODO_FILE = DATA / "todos.json"
 TIMETABLE_FILE = DATA / "timetable.json"
 CONFIG_PATH = DATA / "config.toml"
@@ -86,7 +89,7 @@ def save_json(path: Path, data) -> None:
 
 
 def day_label(d: dt.date) -> str:
-    return f"{d.month}/{d.day} 周{WEEKDAYS[d.weekday()]}"
+    return i18n.day_label(d)
 
 
 def parse_date(s: str) -> dt.date:
@@ -284,7 +287,7 @@ def ddl_delete(a: dict) -> str:
     if d.get("source") == "mail":
         # 从邮件自动加进来的：顺便学一下，以后这类要不要都不加（我回复「确认」才会记住）
         out += ("\n（这一条是从邮件里自动加进提醒的。请接着调用 settings_change："
-                "key=about_me, action=add, value=「不感兴趣：<把它概括成一类，不超过 20 字，"
+                f"key=about_me, action=add, value=「{tr('no_interest')}<把它概括成一类，不超过 20 字，"
                 "比如「短期交流/跨校课程项目」，不要只写这一个项目的名字>」。"
                 "程序会问我以后这类要不要都不加；回答里只要说已经删了。）")
     return out
@@ -520,6 +523,7 @@ def settings_show(a: dict) -> str:
                                              or "  （空）"))
         else:
             out.append(f"{key}：{desc}\n  现在：{json.dumps(val, ensure_ascii=False)}")
+    out.append(f"language：语言（用 language_set 改，马上生效）\n  现在：{i18n.lang_of(cfg)}")
     out.append("（邮件检查和早上汇总的时间由系统定时器控制，聊天里改不了）")
     return "\n".join(out)
 
@@ -581,10 +585,12 @@ def settings_change(a: dict) -> str:
         if kind not in ("list", "text"):
             return " " + json.dumps(v, ensure_ascii=False)
         rows = v if kind == "list" else _lines(v)
-        return "".join(f"\n  {i}. {x}" for i, x in enumerate(rows, 1)) or " （空）"
-    preview = f"要修改设置「{key}」（{desc}）\n原来：{fmt(old)}\n改成：{fmt(new)}"
-    if kind == "text" and action == "add" and value.startswith("不感兴趣"):
-        preview += "\n\n以后这类邮件会放进 ⚪ 忽略、不加提醒（摘要底部的「被忽略」列表里还能看到）。"
+        return "".join(f"\n  {i}. {x}" for i, x in enumerate(rows, 1)) or tr("set.empty")
+    # 预览由程序直接发给我，所以用当前语言
+    shown = i18n.SETTING_DESC_DE[key] if i18n.LANG == "de" else desc
+    preview = tr("set.preview", key=key, desc=shown, old=fmt(old), new=fmt(new))
+    if kind == "text" and action == "add" and value.startswith(("不感兴趣", "Kein Interesse")):
+        preview += tr("set.no_interest_note")
     PENDING["settings"] = {"key": key, "new": new, "preview": preview, "at": time.time(),
                            "fresh": True}
     return ("改动已准备好，但还没生效。程序会把改动内容发给我，我回复「确认」才会改。"
@@ -654,18 +660,14 @@ def set_toml(text: str, section: str, key: str, value) -> str:
     return text[:vs] + _toml_value(value, comments) + text[ve:]
 
 
-def apply_pending() -> str:
-    """你回复「确认」后由 bot.py 调用（AI 调用不到这里）。先备份，改完检查，不对就还原。"""
-    p = PENDING.pop("settings", None)
-    if not p:
-        return "没有等待确认的设置改动。"
-    sec = SETTINGS[p["key"]][0]
+def write_config(sec: str, key: str, value) -> Path:
+    """只改 config.toml 里的一项：先检查、再备份、再写入，返回备份文件。CFG 跟着更新。"""
     old_text = CONFIG_PATH.read_text(encoding="utf-8")
-    new_text = set_toml(old_text, sec, p["key"], p["new"])
+    new_text = set_toml(old_text, sec, key, value)
     expect = tomllib.loads(old_text)
-    expect.setdefault(sec, {})[p["key"]] = p["new"]
+    expect.setdefault(sec, {})[key] = value
     if tomllib.loads(new_text) != expect:            # 除了这一项，别的都必须一模一样
-        raise RuntimeError("改完检查没通过，没有修改 config.toml")
+        raise RuntimeError(tr("set.check_failed"))
     BACKUP_DIR.mkdir(exist_ok=True)
     backup = BACKUP_DIR / f"config.toml.{now():%Y%m%d-%H%M%S}"
     shutil.copy2(CONFIG_PATH, backup)
@@ -674,7 +676,48 @@ def apply_pending() -> str:
     tmp.replace(CONFIG_PATH)
     CFG.clear()
     CFG.update(tomllib.loads(new_text))
-    return f"✅ 设置「{p['key']}」改好了，下次脚本运行时生效。\n改之前的配置备份在 backup/{backup.name}"
+    return backup
+
+
+def apply_pending() -> str:
+    """你回复「确认」后由 bot.py 调用（AI 调用不到这里）。先备份，改完检查，不对就不改。"""
+    p = PENDING.pop("settings", None)
+    if not p:
+        return tr("set.none_pending")
+    backup = write_config(SETTINGS[p["key"]][0], p["key"], p["new"])
+    return tr("set.done", key=p["key"], backup=backup.name)
+
+
+# ================================================================ 语言（马上生效，不用确认）
+
+def set_language(code: str) -> bool:
+    """切换语言：写进 config.toml 的 [general] language，马上生效。返回是不是真的改了。
+    /start、/language 的按钮和 language_set 工具都用这个。"""
+    code = str(code).strip().lower()
+    if code not in i18n.LANGS:
+        raise ValueError(f"只能是 {' / '.join(i18n.LANGS)}")
+    cfg = tomllib.loads(CONFIG_PATH.read_text(encoding="utf-8"))
+    changed = cfg.get("general", {}).get("language") != code      # 没写过也写进去，以后一眼看得到
+    if changed:
+        write_config("general", "language", code)
+    else:
+        CFG.clear()
+        CFG.update(cfg)
+    i18n.use(CFG)
+    return changed
+
+
+@tool("language_set", "切换语言：你的回答和所有推送（邮件摘要、提醒、ILIAS、论坛总结）都改用这个语言。"
+      "马上生效，不用我确认。我说「我要用德语版」「换回中文」「Deutsch bitte」「auf Chinesisch」之类时用。",
+      {"language": {"type": "string", "enum": list(i18n.LANGS), "description": "zh = 中文，de = 德语"}},
+      ["language"])
+def language_set(a: dict) -> str:
+    code = str(a["language"]).strip().lower()
+    name = {"zh": "中文", "de": "德语（Deutsch）"}.get(code, code)
+    if not set_language(code):
+        return f"现在已经是{name}了，不用改。用{name}回答我。"
+    return (f"已切换为{name}，马上生效（邮件摘要、提醒、ILIAS、论坛总结也一样）。"
+            f"从这条回答开始用{name}回答我，简短告诉我已经切换好了。")
 
 
 # ================================================================ O5 课表 / 日程

@@ -5,7 +5,9 @@
 所有会写入的东西都用临时文件夹里的【副本】：deadlines.json、config.toml、todos、课表。
 真实提醒和设置不会被改，也不发 Telegram。邮件、ILIAS 论坛只读。
   A 部分：直接调用每个工具（0 token）
-  B 部分：用一串中文句子测 AI 有没有选对工具（花少量 token）
+  语言：中文 / 德语的固定文字、切换语言、按钮（0 token）
+  B 部分：用一串中文句子测 AI 有没有选对工具，最后测用德语聊天和切换语言（花少量 token）
+测试默认用中文（不管 config.toml 里现在是什么语言），德语的部分单独测。
 """
 from __future__ import annotations
 
@@ -25,6 +27,7 @@ import digest  # noqa: E402
 
 digest.load_env(digest.DATA / ".env")
 import bot  # noqa: E402
+import i18n  # noqa: E402
 import ilias_sync  # noqa: E402
 import tools  # noqa: E402
 
@@ -42,6 +45,7 @@ tools.BACKUP_DIR = TMP / "backup"
 CFG = tomllib.loads(tools.CONFIG_PATH.read_text(encoding="utf-8"))
 tools.CFG.update(CFG)
 ORIG_CONFIG = tools.CONFIG_PATH.read_text(encoding="utf-8")
+i18n.LANG = "zh"                 # 下面的检查按中文写；德语在 part_lang 里单独测
 
 results: list[tuple[str, bool, str]] = []
 
@@ -411,6 +415,137 @@ def part_a() -> None:
         check("forum_read", out.startswith("（以下是论坛原文"), out)
 
 
+# ================================================================ 语言：中文 / 德语（0 token）
+CJK = re.compile(r"[\u4e00-\u9fff\u3000-\u303f\uff01-\uff5e]")    # 汉字和中文标点
+
+
+def no_chinese(s: str) -> bool:
+    """德语界面里不能有汉字（选语言按钮上的「中文」两个字除外）。"""
+    return not CJK.search(s.replace("中文", ""))
+
+
+def german(s: str) -> bool:
+    """AI 的回答是不是德语：汉字很少，而且有常见的德语词。"""
+    return (len(CJK.findall(s)) <= len(s) * 0.15
+            and re.search(r"\b(ich|du|dir|die|der|das|und|ist|sind|noch|nicht|keine?|auf|jetzt|Deutsch)\b",
+                          s, re.I) is not None)
+
+
+def restore_config() -> None:
+    tools.CONFIG_PATH.write_text(ORIG_CONFIG, encoding="utf-8")
+    tools.CFG.clear(), tools.CFG.update(CFG)
+    tools.PENDING.clear()
+    i18n.LANG = "zh"
+
+
+def part_lang() -> None:
+    print("\n========== 语言：中文 / 德语（0 token）==========")
+    import datetime as _dt
+    import string
+    import forums
+    import remind
+    fields = lambda s: sorted(f for _, f, _, _ in string.Formatter().parse(s) if f)   # noqa: E731
+    bad = [k for k, v in i18n.TEXTS.items() if set(v) != {"zh", "de"} or fields(v["zh"]) != fields(v["de"])]
+    check("每句固定文字都有中文和德语，而且要填的内容一样", not bad, str(bad))
+    bad = [k for k, v in i18n.TEXTS.items() if not k.startswith("ai.") and not no_chinese(v["de"])]
+    check("德语版里没有汉字", not bad, str(bad))
+    check("每个能改的设置都有德语说明", set(i18n.SETTING_DESC_DE) == set(tools.SETTINGS))
+    check("没写语言 / 写错了 → 中文", i18n.lang_of({}) == "zh" and i18n.lang_of({"general": {"language": "fr"}}) == "zh"
+          and i18n.lang_of({"general": {"language": "DE"}}) == "de")
+    check("德语里有「确认」的说法", {"ja", "bestätigen"} <= bot.CONFIRM_WORDS)
+
+    i18n.LANG = "de"
+    d = _dt.date(2026, 11, 30)
+    check("德语日期：Mo 30.11. 13:15",
+          i18n.day_label(d) == "Mo 30.11."
+          and i18n.due_label(_dt.datetime(2026, 11, 30, 13, 15), True) == "Mo 30.11. 13:15"
+          and i18n.date_text("2026-12-01") == "01.12.2026" and i18n.date_text("2026-12-01", True) == "1.12."
+          and i18n.date_text("bald") == "bald",
+          i18n.due_label(_dt.datetime(2026, 11, 30, 13, 15), True))
+    # 推送：邮件摘要、早上汇总、3 小时提醒、ILIAS、论坛
+    mails = [digest.Mail("KIT", "Prof <p@kit.edu>", "Klausuranmeldung", "", False, True, cat="must",
+                         summary="Anmeldung bis Freitag", deadline="2099-02-01", time="12:00", reminder="added"),
+             digest.Mail("KIT", "Intl <i@kit.edu>", "Summer School", "", False, True, cat="maybe",
+                         summary="Bewerbung offen", deadline="2099-03-01", kind="chance", reminder="chance"),
+             digest.Mail("Gmail", "Shop <s@x.de>", "Black Friday", "", True, True, cat="ignore"),
+             digest.Mail("Gmail", "X <x@y.de>", "", "", False, False)]
+    text = digest.build_digest(mails, ["Gmail: Abruf fehlgeschlagen: Timeout"], 1234)
+    show(text, 500)
+    check("德语邮件摘要", no_chinese(text) and "Zu erledigen" in text and "01.02.2099 12:00" in text
+          and "Frist 1.3." in text and "Ignoriert" in text and "(kein Betreff)" in text, text)
+    now = ilias_sync.now()
+    store = [{"course": "BS", "title": "Blatt 3", "due": (now + _dt.timedelta(hours=2)).isoformat(timespec="minutes"),
+              "time_known": True},
+             {"course": i18n.tr("rm.todo"), "title": "Bank", "due": (now + _dt.timedelta(days=2)).isoformat(
+                 timespec="minutes"), "time_known": False}]
+    text = remind.morning(store) + "\n" + remind.urgent(copy.deepcopy(store), [0, 0])
+    show(text, 400)
+    check("德语早上汇总和 3 小时提醒", no_chinese(text) and "fällig" in text and "(ohne Uhrzeit)" in text
+          and "To-do" in text, text)
+    text = ilias_sync.format_list(store, i18n.tr("il.new"))
+    check("德语 ILIAS 推送", no_chinese(text) and "noch 1 Std." in text and "Blatt 3" in text, text)
+    text = forums.build_message([("GKI", "Frage zu Blatt 2", 3, True)], {0: "Abgabe verschoben"}, 99)
+    check("德语论坛总结", no_chinese(text) and "3 neue Beiträge, mit Antwort von Lehrenden" in text, text)
+    text = bot.help_text() + bot.usage_text({"usage": {}})
+    check("德语使用说明和 token 用量", no_chinese(text) and "/language" in text, text[:300])
+    prompt, _ = digest.build_prompt({"about_me": "Kein Interesse: Hackathons"}, {})
+    check("德语时 AI 用德语写邮件摘要", "德语" in prompt and "Kein Interesse" in prompt, prompt[-300:])
+    call("settings_change", key="always_important_senders", action="add", value="tutor@kit.edu")
+    pv = (tools.PENDING.get("settings") or {}).get("preview", "")
+    check("德语改设置预览", no_chinese(pv) and "Vorher:" in pv and "tutor@kit.edu" in pv, pv)
+    tools.PENDING.clear()
+    i18n.LANG = "zh"
+
+    # 切换语言：写进 config.toml（只改这一项、注释都在、有备份），马上生效
+    n_backup = len(list(tools.BACKUP_DIR.glob("config.toml.*"))) if tools.BACKUP_DIR.exists() else 0
+    changed = tools.set_language("de")
+    new = tomllib.loads(tools.CONFIG_PATH.read_text(encoding="utf-8"))
+    exp = copy.deepcopy(CFG)
+    exp.setdefault("general", {})["language"] = "de"
+    check("切换到德语：config 里只多了 language = de，马上生效",
+          changed and new == exp and i18n.LANG == "de" and tools.CFG == exp)
+    check("切换语言时注释都还在、改之前有备份",
+          tools.CONFIG_PATH.read_text(encoding="utf-8").count("#") >= ORIG_CONFIG.count("#")
+          and len(list(tools.BACKUP_DIR.glob("config.toml.*"))) > n_backup)
+    check("已经是德语再切一次：不改", tools.set_language("de") is False)
+    out = call("language_set", language="zh")
+    check("language_set 工具切回中文", "已切换为中文" in out and i18n.LANG == "zh"
+          and tomllib.loads(tools.CONFIG_PATH.read_text(encoding="utf-8"))["general"]["language"] == "zh", out)
+    check("不支持的语言被拒绝", "工具出错" in call("language_set", language="fr") and i18n.LANG == "zh")
+
+    # 按钮：/start、/language 发出的【中文】【Deutsch】（用假的 Telegram，不发消息）
+    class FakeTG:
+        def __init__(self):
+            self.calls, self.sent = [], []
+
+        def call(self, method, http_timeout=30, **params):
+            self.calls.append((method, params))
+            return True
+
+        def send(self, chat_id, text):
+            self.sent.append(text)
+    tg = FakeTG()
+    bot.ask_language(tg, "1")
+    btns = [b["callback_data"] for b in tg.calls[0][1]["reply_markup"]["inline_keyboard"][0]]
+    check("/start 发出两个语言按钮", btns == ["lang:zh", "lang:de"] and tg.calls[0][1]["text"] == i18n.PICK, str(btns))
+    tg = FakeTG()
+    history = [{"role": "user", "content": "你好"}]
+    cq = {"id": "q1", "data": "lang:de", "message": {"message_id": 7, "chat": {"id": 1, "type": "private"}}}
+    bot.on_button(tg, "1", cq, history)
+    methods = [m for m, _ in tg.calls]
+    menu = next((p["commands"] for m, p in tg.calls if m == "setMyCommands"), [])
+    check("点【Deutsch】：马上切换、清空对话、按钮那条改成「✅ Sprache: Deutsch」、发德语说明、菜单换成德语",
+          i18n.LANG == "de" and not history and "answerCallbackQuery" in methods
+          and ("editMessageText", {"chat_id": "1", "message_id": 7, "text": "✅ Sprache: Deutsch"}) in tg.calls
+          and tg.sent and tg.sent[0].startswith("Ich bin dein Lernassistent")
+          and [c["command"] for c in menu] == list(bot.COMMANDS) and all(no_chinese(c["description"]) for c in menu),
+          f"{tg.calls} / {tg.sent[:1]}")
+    tg = FakeTG()
+    bot.on_button(tg, "1", dict(cq, data="lang:xx"), history)
+    check("不认识的按钮：什么都不改", i18n.LANG == "de" and not tg.sent)
+    restore_config()
+
+
 # ================================================================ B：AI 选工具
 CASES = [  # (你说的话, 必须用到的工具, 是否接着上一句的对话, 回答里必须有的字)
     ("还有哪些作业没交？", {"ddl_list"}, False, ""),
@@ -496,11 +631,41 @@ def part_b() -> None:
     u = state["usage"]
     tin = sum(d["in"] for d in u.values())
     tout = sum(d["out"] for d in u.values())
-    calls = sum(d["calls"] for d in u.values())
-    print(f"\nB 部分共 {calls} 次 AI 调用，{tin + tout:,} token，"
+    n_calls = sum(d["calls"] for d in u.values())
+    print(f"\nB 部分共 {n_calls} 次 AI 调用，{tin + tout:,} token，"
           f"约 ${(tin * bot.PRICE_IN + tout * bot.PRICE_OUT) / 1e6:.3f}")
     check("AI 没有自己改掉设置（真正修改要我回复「确认」）",
           tools.CONFIG_PATH.read_text(encoding="utf-8") == ORIG_CONFIG)
+
+    # 语言：聊天里切换（马上生效），切换后用德语聊天，再切回来
+    print("\n   —— 语言 ——")
+    lang_cases = [  # (你说的话, 之后应该是什么语言, 必须用到的工具)
+        ("我要用德语版", "de", {"language_set"}),
+        ("Welche Abgaben sind noch offen?", "de", {"ddl_list"}),
+        ("Bitte wieder auf Chinesisch antworten", "zh", {"language_set"}),
+    ]
+    try:
+        for text, lang, need in lang_cases:
+            used = []
+            try:
+                calls.clear()
+                reply = bot.answer(text, [], tools.CFG, state, trace=used)
+            except Exception as e:
+                traceback.print_exc()
+                check(f"「{text}」", False, repr(e))
+                continue
+            conf = tomllib.loads(tools.CONFIG_PATH.read_text(encoding="utf-8"))
+            ok = need <= set(used) and i18n.LANG == lang and i18n.lang_of(conf) == lang
+            ok = ok and (german(reply) if lang == "de" else bool(CJK.search(reply)))
+            ok = ok and not re.search(r"#\d|KIT:\d|Gmail:\d|\d{6,}/\d{5,}", reply)
+            if "ddl_list" in need:
+                lists = [c for n, c in calls if n == "ddl_list"]
+                ok = ok and lists and not any(c.get("all") or c.get("this_week") for c in lists)
+            check(f"「{text}」→ {used or '不用工具'}，之后是 {lang}", ok,
+                  f"需要 {need}；现在 {i18n.LANG}；回答：{reply[:200]}")
+            show("回答：" + reply, 220)
+    finally:
+        restore_config()
 
 
 if __name__ == "__main__":
@@ -512,6 +677,7 @@ if __name__ == "__main__":
         if "--format-only" not in sys.argv:
             part_net()
             part_a()
+            part_lang()
             if "--no-llm" not in sys.argv:
                 part_b()
     finally:

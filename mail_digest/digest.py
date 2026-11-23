@@ -27,6 +27,9 @@ from dataclasses import dataclass
 from html.parser import HTMLParser
 from pathlib import Path
 
+import i18n
+from i18n import tr
+
 HERE = Path(__file__).resolve().parent
 # 数据文件夹：config.toml、.env 和所有 .json 都放在这里。
 # 默认就是代码所在的文件夹；Docker 里用环境变量 DATA_DIR=/data 把数据和代码分开。
@@ -34,13 +37,7 @@ DATA = Path(os.environ.get("DATA_DIR") or HERE).resolve()
 MAX_FULL_BYTES = 1_500_000  # 超过这个大小只读邮件头（多半是大附件）
 IGNORED_LIST_MAX = 60       # 摘要里最多逐封列出多少封被忽略的邮件
 
-CATS = {
-    "must": "🔴 必须处理",
-    "job": "💼 求职机会",
-    "maybe": "🟡 可以看看",
-    "ignore": "⚪ 已忽略",
-    "unknown": "❔ 未分类",
-}
+CATS = ("must", "job", "maybe", "ignore", "unknown")   # 显示的名字见 i18n.py 的 cat.*
 
 
 @dataclass
@@ -79,7 +76,7 @@ def load_env(path: Path) -> None:
 def secret(name: str) -> str:
     val = os.environ.get(name, "")
     if not val:
-        raise RuntimeError(f"缺少环境变量 {name}（写在 .env 里）")
+        raise RuntimeError(tr("env.missing", name=name))
     return val
 
 
@@ -186,14 +183,14 @@ def fetch_account(acc: dict, state: dict, since_days: int, max_n: int,
     name = acc["name"]
     st = state.get(name, {})
     if not acc.get("user") or not acc["user"].isascii():
-        raise RuntimeError("config.toml 里这个邮箱的 user 还没改成真实地址")
+        raise RuntimeError(tr("dg.user_not_set"))
     secret(acc["password_env"])   # 先检查密码填了没有，再去连接
     conn = imaplib.IMAP4_SSL(acc["host"], acc.get("port", 993), timeout=60)
     try:
         conn.login(acc["user"], secret(acc["password_env"]))
         typ, _ = conn.select(acc.get("folder", "INBOX"), readonly=True)  # 只读
         if typ != "OK":
-            raise RuntimeError(f"打不开文件夹 {acc.get('folder', 'INBOX')}")
+            raise RuntimeError(tr("dg.folder", folder=acc.get("folder", "INBOX")))
         uidvalidity = int(conn.response("UIDVALIDITY")[1][0])
 
         last_uid = st.get("last_uid") if st.get("uidvalidity") == uidvalidity else None
@@ -224,7 +221,7 @@ def fetch_account(acc: dict, state: dict, since_days: int, max_n: int,
             mails.append(Mail(
                 account=name,
                 sender=str(msg.get("From", "")),
-                subject=str(msg.get("Subject", "")) or "(无标题)",
+                subject=str(msg.get("Subject", "")) or tr("dg.no_subject"),
                 snippet=clean_text(body_text(msg), snippet_chars),
                 is_bulk=msg.get("List-Unsubscribe") is not None,
                 use_llm=acc.get("llm", True),
@@ -256,7 +253,7 @@ def apply_safety_net(mails: list[Mail], senders: list[str]) -> None:
 
 PROMPT = """你是邮件分类助手。关于我：
 {about_me}
-上面写了「不感兴趣」的那几类东西，相关邮件一律归为 ignore（就算有报名截止日期）。
+上面写了「不感兴趣」或「Kein Interesse」的那几类东西，相关邮件一律归为 ignore（就算有报名截止日期）。
 把下面每封邮件分到一类：
 - must：有截止日期，或需要我回复/行动（考试、作业、注册缴费、签证居留、银行、房东、教授本人来信等）
 - maybe：与我有关但不急（课程公告、讲座活动等）
@@ -269,7 +266,7 @@ deadline：我需要在那之前做某事的日期（提交、报名、缴费、
 course：邮件和我的哪门课有关（只能从这个列表里选：{courses}），都不是就留空。
 replaces：如果邮件是在推迟或改动一个之前的截止日期，写旧日期，否则留空。
 kind（有 deadline 时才看）：duty = 义务，不做会有后果（作业、考试、考试报名、Rückmeldung/注册缴费、签证居留、需要我回复的事）；chance = 机会，可做可不做（项目/交流/课程/奖学金申请、讲座活动报名、比赛、问卷、招聘）。拿不准写 duty。
-只输出 JSON：{{"results":[{{"id":0,"cat":"{cats}","summary":"一句中文摘要，不超过40字","deadline":"YYYY-MM-DD 或空字符串","time":"HH:MM 或空字符串","kind":"duty|chance","course":"课程名或空字符串","replaces":"YYYY-MM-DD 或空字符串"}}]}}
+只输出 JSON：{{"results":[{{"id":0,"cat":"{cats}","summary":"{summary_rule}","deadline":"YYYY-MM-DD 或空字符串","time":"HH:MM 或空字符串","kind":"duty|chance","course":"课程名或空字符串","replaces":"YYYY-MM-DD 或空字符串"}}]}}
 今天是 {today}。"""
 
 
@@ -288,7 +285,7 @@ def build_prompt(llm_cfg: dict, job_cfg: dict, courses: list[str] = ()) -> tuple
                         + "".join(f"  · {r}\n" for r in rules))
     text = PROMPT.format(about_me=llm_cfg.get("about_me", ""), job_rule=job_rule,
                          ignore_rules=ignore_rules, cats="|".join(cats),
-                         courses="、".join(courses) or "（无）",
+                         courses="、".join(courses) or "（无）", summary_rule=tr("ai.mail_summary"),
                          today=dt.date.today().isoformat())
     return text, set(cats)
 
@@ -340,7 +337,7 @@ def classify_llm(mails: list[Mail], cfg: dict, job_cfg: dict,
                     m.replaces = str(res.get("replaces", "") or "")[:10]
                     m.kind = "chance" if res.get("kind") == "chance" else "duty"
         except Exception as e:  # 失败的留在“未分类”，摘要照发
-            errors.append(f"AI 分类失败：{type(e).__name__}: {e}")
+            errors.append(tr("dg.ai_failed", err=f"{type(e).__name__}: {e}"))
     return tokens, "；".join(errors)
 
 
@@ -398,41 +395,42 @@ def short_sender(s: str) -> str:
 
 
 def build_digest(mails: list[Mail], errors: list[str], tokens: int) -> str:
-    today = dt.date.today().isoformat()
-    lines = [f"<b>📬 邮件摘要 {today}</b>（共 {len(mails)} 封新邮件）"]
+    today = i18n.date_text(dt.date.today().isoformat())
+    lines = [tr("dg.title", date=today, n=len(mails))]
     for cat in ("must", "job", "maybe", "unknown"):
         group = [m for m in mails if m.cat == cat]
         if not group:
             continue
-        lines.append(f"\n<b>{CATS[cat]}（{len(group)}）</b>")
+        lines.append(tr("dg.group", cat=tr(f"cat.{cat}"), n=len(group)))
         for m in group:
             # 每封三行：发件人 / 原标题（方便在邮箱里找）/ 一句摘要 + 截止日期
             subj = m.subject if len(m.subject) <= 70 else m.subject[:70] + "…"
-            dl = f" ⏰{m.deadline}{' ' + m.time if m.time else ''}" if m.deadline else ""
+            dl = (f" ⏰{i18n.date_text(m.deadline)}{' ' + m.time if m.time else ''}"
+                  if m.deadline else "")
             if m.reminder == "added":
-                dl += "（已加入提醒）"
+                dl += tr("dg.added")
             elif m.reminder == "dup":
-                dl += "（提醒里已有）"
+                dl += tr("dg.dup")
             elif m.reminder == "chance":
-                dl = f" ⏰可选，截止 {m.deadline[5:]}（没加提醒，想要就跟我说）"
+                dl = tr("dg.chance", date=i18n.date_text(m.deadline, short=True))
             lines.append(f"• [{m.account}] <b>{html.escape(short_sender(m.sender))}</b>")
-            lines.append(f"   📌 {html.escape(subj or '（无标题）')}")
+            lines.append(f"   📌 {html.escape(subj or tr('dg.no_subject'))}")
             if m.summary or dl:
                 lines.append(f"   → {html.escape(m.summary)}{dl}")
     ignored = [m for m in mails if m.cat == "ignore"]
     if ignored:
         # 被忽略的逐封列出（只列标题），方便一眼检查有没有误杀
-        lines.append(f"\n<b>{CATS['ignore']}（{len(ignored)}）</b> 邮件都还在邮箱里：")
+        lines.append(tr("dg.ignored_head", cat=tr("cat.ignore"), n=len(ignored)))
         for m in ignored[:IGNORED_LIST_MAX]:
             subj = m.subject if len(m.subject) <= 50 else m.subject[:50] + "…"
-            lines.append(f"· [{m.account}] {html.escape(short_sender(m.sender))}："
-                         f"{html.escape(subj)}")
+            lines.append(tr("dg.ignored_line", acc=m.account,
+                           sender=html.escape(short_sender(m.sender)), subj=html.escape(subj)))
         if len(ignored) > IGNORED_LIST_MAX:
-            lines.append(f"· ……还有 {len(ignored) - IGNORED_LIST_MAX} 封")
+            lines.append(tr("dg.more", n=len(ignored) - IGNORED_LIST_MAX))
     for e in errors:
         lines.append(f"\n⚠️ {html.escape(e)}")
     if tokens:
-        lines.append(f"\n<i>token 用量：{tokens:,}</i>")
+        lines.append(tr("dg.tokens", n=tokens))
     return "\n".join(lines)
 
 
@@ -470,6 +468,7 @@ def main() -> int:
 
     load_env(DATA / ".env")
     cfg = tomllib.loads(Path(args.config).read_text(encoding="utf-8"))
+    i18n.use(cfg)
     gen = cfg.get("general", {})
     state_path = DATA / "state.json"
     state = load_state(state_path)
@@ -484,7 +483,7 @@ def main() -> int:
             print(f"[{acc['name']}] 新邮件 {len(got)} 封", file=sys.stderr)
             mails += got
         except Exception as e:
-            errors.append(f"{acc['name']} 读取失败：{type(e).__name__}: {e}")
+            errors.append(tr("dg.read_failed", acc=acc["name"], err=f"{type(e).__name__}: {e}"))
 
     tokens = 0
     llm_cfg = cfg.get("llm", {})
@@ -495,13 +494,13 @@ def main() -> int:
             if err:
                 errors.append(err)
         except Exception as e:
-            errors.append(f"AI 分类失败：{type(e).__name__}: {e}")
+            errors.append(tr("dg.ai_failed", err=f"{type(e).__name__}: {e}"))
     apply_safety_net(mails, cfg.get("safety_net", {}).get("always_important_senders", []))
     if cfg.get("ilias"):
         try:
             add_mail_deadlines(mails, save=not args.dry_run)
         except Exception as e:
-            errors.append(f"截止日期加入提醒失败：{type(e).__name__}: {e}")
+            errors.append(tr("dg.ddl_failed", err=f"{type(e).__name__}: {e}"))
 
     if not mails and not errors and not gen.get("send_when_empty", False):
         print("没有新邮件，不推送。", file=sys.stderr)

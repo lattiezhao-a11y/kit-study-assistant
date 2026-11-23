@@ -12,6 +12,7 @@ Telegram 对话机器人（一直在线，只回复你自己）
 工具都在 tools.py 里。每个工具也可以在命令行单独测试：
   python3 bot.py --tool 工具名 '{"参数": "值"}'
 改设置：AI 只能提议，程序把改动发给你，你回复「确认」才由程序修改（AI 自己确认不了）。
+语言：/start 或 /language 点按钮选中文 / Deutsch，或者直接说"我要用德语版"，马上生效（见 i18n.py）。
 """
 from __future__ import annotations
 
@@ -32,8 +33,10 @@ import urllib.request
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
+import i18n
 import tools
 from digest import DATA, load_env, secret
+from i18n import tr
 from tools import TOOLS
 
 HERE = Path(__file__).resolve().parent
@@ -44,7 +47,8 @@ MAX_HISTORY = 16           # 最多记住最近几条（你说的 + 它回的）
 MAX_TOOL_ROUNDS = 6        # 一句话最多调用几轮工具
 TOOL_RESULT_CHARS = 8000   # 工具结果最多交给 AI 多少字
 KEEP_TOOL_CHARS = 2500     # 工具结果在对话记忆里保留多少字（方便追问"第二封写了啥"）
-CONFIRM_WORDS = {"确认", "/yes", "yes", "y", "是", "对", "好", "ok", "确定"}
+CONFIRM_WORDS = {"确认", "/yes", "yes", "y", "是", "对", "好", "ok", "确定",
+                 "ja", "jawohl", "bestätigen", "bestätigt", "bestätige", "okay", "passt"}
 PENDING_MINUTES = 10       # 设置改动等你确认的时间
 MAX_BACKOFF = 30           # 断网时最多隔多久重试一次（网络恢复后最多 30 秒就能收到消息）
 TG_HOST = "api.telegram.org"
@@ -54,7 +58,7 @@ POLL_SECONDS = 10          # 每次等消息最多等几秒（连接悄悄断了
 TYPING_EVERY = 4           # 「正在输入…」Telegram 只显示 5 秒，所以每 4 秒重发一次
 # deepseek-flash 价格（美元 / 百万 token），只用来估算花费；以 DeepSeek 官网为准
 PRICE_IN, PRICE_OUT = 0.30, 1.20
-WEEKDAYS = "一二三四五六日"
+COMMANDS = ("start", "language", "new", "usage", "help")    # Telegram「/」菜单里显示的命令
 
 
 # ---------------------------------------------------------------- 状态与花费
@@ -93,10 +97,10 @@ def usage_text(state: dict) -> str:
         return t
     def fmt(label, t):
         cost = (t["in"] * PRICE_IN + t["out"] * PRICE_OUT) / 1e6
-        return f"{label}：{t['in'] + t['out']:,} token（{t['calls']} 次调用），约 ${cost:.3f}"
+        return tr("bot.usage_line", label=label, tokens=t["in"] + t["out"], calls=t["calls"], cost=cost)
     month = [d for d in state["usage"] if d.startswith(today.strftime("%Y-%m"))]
-    return (fmt("今天", total([today.isoformat()])) + "\n" + fmt("本月", total(month))
-            + "\n（只算聊天机器人；邮件、ILIAS 脚本另算）")
+    return (fmt(tr("bot.today"), total([today.isoformat()])) + "\n"
+            + fmt(tr("bot.month"), total(month)) + "\n" + tr("bot.usage_note"))
 
 
 # ---------------------------------------------------------------- Telegram
@@ -166,7 +170,7 @@ class Telegram:
 
     def send(self, chat_id: str, text: str) -> None:
         """AI 写的 Markdown 转成 Telegram 认识的格式再发；Telegram 不认就退回纯文本。"""
-        for chunk in split_text(text.strip() or "（空回复）", 3000):   # 单条上限 4096
+        for chunk in split_text(text.strip() or tr("bot.empty"), 3000):   # 单条上限 4096
             try:
                 formatted = md_to_html(chunk)
                 if len(formatted) > 4096:                      # 加了格式以后变太长
@@ -194,7 +198,7 @@ def split_text(text: str, limit: int) -> list[str]:
             cur = line
         else:
             cur = f"{cur}\n{line}" if cur else line
-    return [c for c in chunks + [cur] if c.strip()] or ["（空回复）"]
+    return [c for c in chunks + [cur] if c.strip()] or [tr("bot.empty")]
 
 
 def md_to_html(text: str) -> str:
@@ -243,7 +247,7 @@ def md_to_html(text: str) -> str:
 # 还没上线的功能：每做好一个，就从这里删掉（AI 被要求做这些事时必须直说做不到）
 NOT_YET: list[str] = []
 
-SYSTEM = """你是我的私人学习助理，在 Telegram 里用中文回答，简短直接。
+SYSTEM = """你是我的私人学习助理，在 Telegram 里{reply_rule}，简短直接。
 现在是 {now}。我是 KIT（卡尔斯鲁厄理工学院）的学生，这学期的课：{courses}。
 你能用的工具：{tools}
 这些功能还没上线：{not_yet}
@@ -255,8 +259,9 @@ SYSTEM = """你是我的私人学习助理，在 Telegram 里用中文回答，�
 - "交了"= ddl_done；"推迟/改到"= ddl_edit；课程作业用 ddl_*，生活杂事用 todo_*。
 - 邮件只能看最近 7 天，只读。你不能发邮件、回邮件、写草稿；我让你发就说做不到。
 - 改设置只能用 settings_change 提议，程序会让我确认；不要说已经改好了。
-- 我说对某类东西不感兴趣、以后不想再收到这种提醒 → settings_change key=about_me action=add value=「不感兴趣：<概括成一类>」。工具结果让你这样做时也照做。
-- 写日期时用「11/30 周一 13:15」这种格式。
+- 我说对某类东西不感兴趣、以后不想再收到这种提醒 → settings_change key=about_me action=add value=「{no_interest}<概括成一类>」。工具结果让你这样做时也照做。
+- 我要换语言（中文 / 德语）→ language_set，马上生效，不用确认，也不用 settings_change。
+- 写日期时用「{date_example}」这种格式。
 - 「还有哪些作业没交」→ ddl_list 不带参数（只列已经发布的作业）；「这周有哪些作业…」→ this_week=true；工具结果最后的「另外：…」（还没发布的作业、考试）用一句话告诉我，我想看再说「全部」。
 - 编号（#3、课#1、待办 #2、KIT:1234、1234/5678 这类）只给你自己用来调用工具，回答里不要写出来；我会用名字说是哪一个。
 - 格式：列作业、待办、邮件、课这类清单时用 1. 2. 3. 编号列表（程序会显示成 ① ②）；可以用粗体、`代码`；不要用表格。
@@ -290,9 +295,11 @@ def answer(text: str, history: list[dict], cfg: dict, state: dict,
            trace: list | None = None) -> str:
     t = now()
     courses = "、".join(c["name"] for c in cfg.get("ilias", {}).get("courses", [])) or "（未设置）"
-    system = SYSTEM.format(now=f"{t:%Y-%m-%d %H:%M} 周{WEEKDAYS[t.weekday()]}", courses=courses,
+    system = SYSTEM.format(now=f"{t:%Y-%m-%d %H:%M} {i18n.WEEKDAYS['zh'][t.weekday()]}", courses=courses,
                            tools="、".join(TOOLS) or "（暂时没有）",
-                           not_yet="；".join(NOT_YET) or "（无）")
+                           not_yet="；".join(NOT_YET) or "（无）",
+                           reply_rule=tr("ai.reply_rule"), date_example=tr("ai.date_example"),
+                           no_interest=tr("no_interest"))
     messages = [{"role": "system", "content": system}, *history, {"role": "user", "content": text}]
     used = [] if trace is None else trace
     results = []
@@ -317,7 +324,7 @@ def answer(text: str, history: list[dict], cfg: dict, state: dict,
             results.append(f"[{c['function']['name']}] {result}")
             messages.append({"role": "tool", "tool_call_id": c["id"], "content": result})
     else:
-        reply = "这件事我调用了太多次工具还没弄完，先停下来了。换个说法再试试？"
+        reply = tr("bot.too_many_tools")
     # 记住你说的话、最终回答，和工具结果的前一部分（追问"第二封写了啥"时要用到编号）
     memo = reply
     if results:
@@ -329,22 +336,49 @@ def answer(text: str, history: list[dict], cfg: dict, state: dict,
     return reply
 
 
-HELP = """我是你的学习助理 🤖
-直接用中文跟我说话就行。
+def help_text() -> str:
+    return tr("bot.help")
 
-命令：
-/new  清空对话记忆（重新开始）
-/usage  看今天和本月花了多少 token
-/help  显示这条说明
 
-你可以这样跟我说：
-• 作业："还有哪些作业"、"BS 第三次作业交了"、"TGI 作业推迟到周五 12 点"
-• 待办："记一下：周三去银行"、"我有哪些待办"
-• 邮件（最近 7 天，只读）："今天 KIT 有什么邮件"、"那封 Tutorium 的邮件写了啥"
-• 课表："明天有什么课"、"这周的安排"；加课："周一 9:45–11:15 BS 讲座 在 HS a.m. Fasanengarten"
-• 论坛："GKI 论坛最近在讨论什么"
-• 设置："以后 XX 的邮件都忽略"（我会先给你看改动，你回复「确认」才改）
-• 不感兴趣："像 XX 这种我不感兴趣"（记进自我介绍，以后这类邮件不加提醒）"""
+# ---------------------------------------------------------------- 语言：按钮 + 「/」菜单
+
+LANG_BUTTONS = {"inline_keyboard": [[{"text": name, "callback_data": f"lang:{code}"}
+                                     for code, name in i18n.LANGS.items()]]}
+
+
+def ask_language(tg: Telegram, chat_id: str) -> None:
+    """发一条带【中文】【Deutsch】两个按钮的消息（/start、/language）。"""
+    tg.call("sendMessage", http_timeout=15, chat_id=chat_id, text=i18n.PICK, reply_markup=LANG_BUTTONS)
+
+
+def set_commands(tg: Telegram) -> None:
+    """Telegram 输入框旁「/」菜单里的命令说明，跟着语言换。失败了不影响聊天。"""
+    try:
+        tg.call("setMyCommands", http_timeout=10,
+                commands=[{"command": c, "description": tr(f"cmd.{c}")} for c in COMMANDS])
+    except Exception as e:
+        print(f"设置命令菜单失败（不影响使用）：{e}", flush=True)
+
+
+def on_button(tg: Telegram, owner: str, cq: dict, history: list[dict]) -> None:
+    """你点了按钮（目前只有选语言的按钮）。"""
+    try:
+        tg.call("answerCallbackQuery", http_timeout=10, callback_query_id=cq["id"])   # 按钮停止转圈
+    except Exception:
+        pass
+    data = str(cq.get("data") or "")
+    code = data.partition(":")[2]
+    if not data.startswith("lang:") or code not in i18n.LANGS:
+        return
+    tools.set_language(code)
+    history.clear()                       # 之前的对话是另一种语言，清掉免得 AI 跟着用旧语言
+    try:                                  # 按钮那条消息改成「✅ 语言：…」，按钮消失
+        tg.call("editMessageText", http_timeout=10, chat_id=owner,
+                message_id=cq["message"]["message_id"], text=tr("lang.done"))
+    except Exception:
+        tg.send(owner, tr("lang.done"))
+    tg.send(owner, help_text())
+    set_commands(tg)
 
 
 # ---------------------------------------------------------------- 主循环
@@ -358,6 +392,7 @@ def main() -> int:
         sys.stdout.reconfigure(encoding="utf-8")
     load_env(DATA / ".env")
     cfg = tomllib.loads(Path(args.config).read_text(encoding="utf-8"))
+    i18n.use(cfg)
     tools.CFG.update(cfg)
     tools.CONFIG_PATH = Path(args.config)
     cfg = tools.CFG                                   # 改完设置后这里会自动是新的
@@ -377,13 +412,14 @@ def main() -> int:
     last_active = now()
     backoff = 5
     stalled = False                                  # 上一次是不是连接卡住了
-    print(f"机器人已启动，工具 {len(TOOLS)} 个：{', '.join(TOOLS) or '无'}", flush=True)
+    set_commands(tg)
+    print(f"机器人已启动，语言 {i18n.LANG}，工具 {len(TOOLS)} 个：{', '.join(TOOLS) or '无'}", flush=True)
 
     while True:
         try:
             # 每次最多等 POLL_SECONDS 秒有没有新消息，有消息 Telegram 会马上交过来
             updates = tg.call("getUpdates", http_timeout=POLL_SECONDS + 5, timeout=POLL_SECONDS,
-                              offset=state["offset"], allowed_updates=["message"])
+                              offset=state["offset"], allowed_updates=["message", "callback_query"])
             backoff, stalled = 5, False
         except TimeoutError as e:
             if not stalled:                          # 连接悄悄卡住了：马上换新连接，不用等
@@ -403,6 +439,16 @@ def main() -> int:
         for upd in updates:
             state["offset"] = upd["update_id"] + 1
             save_state(state)
+            cq = upd.get("callback_query")
+            if cq:                                   # 点了按钮
+                chat = (cq.get("message") or {}).get("chat", {})
+                if str(chat.get("id")) == owner and chat.get("type") == "private":
+                    try:
+                        on_button(tg, owner, cq, history)
+                    except Exception as e:
+                        traceback.print_exc()
+                        tg.send(owner, tr("bot.error", err=f"{type(e).__name__}: {e}"))
+                continue
             msg = upd.get("message") or {}
             chat = msg.get("chat", {})
             if str(chat.get("id")) != owner or chat.get("type") != "private":
@@ -412,7 +458,7 @@ def main() -> int:
             print(f"{now():%H:%M:%S} 收到消息（你在 {sent:%H:%M:%S} 发的，"
                   f"晚到 {(now() - sent).total_seconds():.0f}s）", flush=True)
             if not text:
-                tg.send(owner, "目前我只看得懂文字消息。")
+                tg.send(owner, tr("bot.text_only"))
                 continue
 
             if now() - last_active > dt.timedelta(minutes=IDLE_MINUTES):
@@ -420,12 +466,15 @@ def main() -> int:
             last_active = now()
 
             cmd = text.split()[0].split("@")[0].lower()
-            if cmd in ("/start", "/help"):
-                tg.send(owner, HELP)
+            if cmd in ("/start", "/language"):         # 先选语言，选好了再发使用说明
+                ask_language(tg, owner)
+                continue
+            if cmd == "/help":
+                tg.send(owner, help_text())
                 continue
             if cmd == "/new":
                 history.clear()
-                tg.send(owner, "好，对话记忆清空了，我们重新开始。")
+                tg.send(owner, tr("bot.new"))
                 continue
             if cmd == "/usage":
                 tg.send(owner, usage_text(state))
@@ -442,27 +491,30 @@ def main() -> int:
                         tg.send(owner, tools.apply_pending())
                     except Exception as e:
                         traceback.print_exc()
-                        tg.send(owner, f"⚠️ 没改成：{e}（config.toml 没有变）")
+                        tg.send(owner, tr("bot.not_changed", err=e))
                     continue
                 else:
                     tools.PENDING.pop("settings", None)
-                    tg.send(owner, "（刚才那个设置改动已取消，没有修改）")
+                    tg.send(owner, tr("bot.pending_cancelled"))
 
             got = now()
             stop_typing = threading.Event()
             threading.Thread(target=tg.keep_typing, args=(owner, stop_typing), daemon=True).start()
+            lang_before = i18n.LANG
             try:
                 reply = answer(text, history, cfg, state)
             except urllib.error.HTTPError as e:
-                reply = f"⚠️ AI 调用失败（HTTP {e.code}），稍后再试。"
+                reply = tr("bot.ai_failed", code=e.code)
             except Exception as e:
                 traceback.print_exc()
-                reply = f"⚠️ 出错了：{type(e).__name__}: {e}"
+                reply = tr("bot.error", err=f"{type(e).__name__}: {e}")
             save_state(state)
+            if i18n.LANG != lang_before:              # 这句话里换了语言（language_set）
+                history.clear()                       # 旧语言的对话清掉，「/」菜单也换过来
+                set_commands(tg)
             pending = tools.PENDING.get("settings")
             if pending and pending.pop("fresh", False):   # 改动内容由程序原样发出，不靠 AI 转述
-                reply += (f"\n\n———\n{pending['preview']}\n\n回复「确认」生效；"
-                          f"回复别的内容就取消（{PENDING_MINUTES} 分钟内有效）。")
+                reply += f"\n\n———\n{pending['preview']}\n\n" + tr("bot.confirm_hint", minutes=PENDING_MINUTES)
             stop_typing.set()
             try:
                 tg.send(owner, reply)

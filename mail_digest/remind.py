@@ -20,8 +20,10 @@ import sys
 import tomllib
 from pathlib import Path
 
+import i18n
 from digest import DATA, load_env, send_telegram
-from ilias_sync import TZ, WEEKDAYS, locked_store, now, save_json, upcoming
+from i18n import tr
+from ilias_sync import TZ, locked_store, now, save_json, upcoming
 
 TODO_FILE = DATA / "todos.json"      # 机器人记的杂事待办：写了日期的也一起提醒
 
@@ -35,7 +37,7 @@ def todo_items() -> list[dict]:
             continue
         day = dt.date.fromisoformat(t["date"])
         hh, mm = map(int, t["time"].split(":")) if t.get("time") else (0, 0)
-        out.append({"course": "📝 待办", "title": t["text"], "todo_id": t["id"],
+        out.append({"course": tr("rm.todo"), "title": t["text"], "todo_id": t["id"],
                     "due": dt.datetime(day.year, day.month, day.day, hh, mm, tzinfo=TZ)
                     .isoformat(timespec="minutes"),
                     "time_known": bool(t.get("time")), "reminded": t.get("reminded", [])})
@@ -56,8 +58,10 @@ def save_todo_reminded(items: list[dict]) -> None:
 
 def line(d: dict, with_date: bool) -> str:
     due = dt.datetime.fromisoformat(d["due"])
-    when = f"{due.month}/{due.day} 周{WEEKDAYS[due.weekday()]} " if with_date else ""
-    when += f"{due:%H:%M}" if d.get("time_known") else "（没写具体时间）"
+    if with_date:
+        when = i18n.due_label(due, d.get("time_known"))
+    else:
+        when = f"{due:%H:%M}" if d.get("time_known") else tr("no_time").strip()
     return f" • [{html.escape(d['course'])}] {html.escape(d['title'])} — {when}"
 
 
@@ -74,13 +78,13 @@ def morning(store: list[dict]) -> str:
             groups["soon"].append(d)
     if not any(groups.values()):
         return ""
-    out = ["☀️ <b>近 3 天要做的事</b>"]
+    out = [tr("rm.morning")]
     if groups["today"]:
-        out += ["🔴 <b>今天截止</b>"] + [line(d, False) for d in groups["today"]]
+        out += [tr("rm.today")] + [line(d, False) for d in groups["today"]]
     if groups["tomorrow"]:
-        out += ["🟠 <b>明天截止</b>"] + [line(d, False) for d in groups["tomorrow"]]
+        out += [tr("rm.tomorrow")] + [line(d, False) for d in groups["tomorrow"]]
     if groups["soon"]:
-        out += ["🟡 <b>3 天内</b>"] + [line(d, True) for d in groups["soon"]]
+        out += [tr("rm.soon")] + [line(d, True) for d in groups["soon"]]
     return "\n".join(out)
 
 
@@ -99,7 +103,7 @@ def urgent(store: list[dict], quiet: list[int]) -> str:
             d["reminded"] = sorted(set(d.get("reminded", [])) | {"3h"})
     if not hits:
         return ""
-    return "🚨 <b>3 小时内截止</b>\n" + "\n".join(line(d, False) for d in hits)
+    return tr("rm.urgent") + "\n" + "\n".join(line(d, False) for d in hits)
 
 
 def main() -> int:
@@ -113,6 +117,7 @@ def main() -> int:
 
     load_env(DATA / ".env")
     cfg = tomllib.loads(Path(args.config).read_text(encoding="utf-8"))
+    i18n.use(cfg)
     quiet = cfg.get("ilias", {}).get("quiet_hours", [0, 7])
 
     with locked_store(save=not args.dry_run) as store:

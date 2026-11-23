@@ -39,7 +39,9 @@ from pathlib import Path
 from zoneinfo import ZoneInfo
 
 import forums as forums_mod
+import i18n
 from digest import DATA, load_env, secret, send_telegram
+from i18n import tr
 
 HERE = Path(__file__).resolve().parent
 ILIAS = "https://ilias.studium.kit.edu"
@@ -54,7 +56,7 @@ MAX_PDFS = 40            # 每次最多读多少个新 PDF（没读到的下次�
 PDF_CHARS = 1200         # 每个 PDF 发给 AI 的字数上限
 SEGMENT_CHARS = 500      # 每段网页文字的字数上限
 LLM_CHARS = 14000        # 每次请求最多发多少字（超过就分批）
-WEEKDAYS = "一二三四五六日"
+WEEKDAYS = "一二三四五六日"     # 只用在给 AI 的提示词里（显示给你看的日期见 i18n.py）
 
 DATE_HINT = re.compile(
     r"\b\d{1,2}\.\s?\d{1,2}\.(?:\s?\d{2,4})?"
@@ -123,20 +125,18 @@ def text_of(fragment: str) -> str:
 
 
 def fmt_due(d: dict) -> str:
-    due = dt.datetime.fromisoformat(d["due"])
-    s = f"{due.month}/{due.day} 周{WEEKDAYS[due.weekday()]}"
-    s += f" {due:%H:%M}" if d.get("time_known") else "（没写具体时间）"
-    return s
+    return i18n.due_label(dt.datetime.fromisoformat(d["due"]), bool(d.get("time_known")))
 
 
 def days_left(d: dict) -> str:
     delta = dt.datetime.fromisoformat(d["due"]) - now()
     hours = delta.total_seconds() / 3600
     if hours < 0:
-        return "已过"
+        return tr("il.passed")
     if hours < 24:
-        return f"还剩 {int(hours)} 小时"
-    return f"还剩 {int(hours // 24)} 天"
+        return tr("il.hours_left", n=int(hours))
+    days = int(hours // 24)
+    return tr("il.one_day_left") if days == 1 else tr("il.days_left", n=days)
 
 
 # ---------------------------------------------------------------- 登录 ILIAS
@@ -178,18 +178,18 @@ class Ilias:
             data.update({"_eventId_proceed": "", "j_username": user, "j_password": password})
             url, page = self.get(urllib.parse.urljoin(url, action), data)
         if "j_tokenNumber" in page:
-            raise RuntimeError("KIT 登录要求两步验证了，脚本暂时登不进去")
+            raise RuntimeError(tr("il.login_2fa"))
         if "attributeRelease" in page:
-            raise RuntimeError("KIT 登录需要先在浏览器里登录一次 ILIAS，确认信息授权页面")
+            raise RuntimeError(tr("il.login_consent"))
         if "j_password" in page:
-            raise RuntimeError("ILIAS 登录失败：KIT 用户名或密码不对（.env 里的 KIT_PASSWORD）")
+            raise RuntimeError(tr("il.login_wrong"))
         action, fields = self._form(page, "SAMLResponse")
         if action is None:
-            raise RuntimeError("ILIAS 登录失败：没收到 KIT 的登录回复，可能登录页面改版了")
+            raise RuntimeError(tr("il.login_no_saml"))
         url, page = self.get(action, {"RelayState": fields.get("RelayState", ""),
                                       "SAMLResponse": fields["SAMLResponse"]})
         if "logout" not in page.lower():
-            raise RuntimeError("ILIAS 登录后没进到 ILIAS，可能登录流程改版了")
+            raise RuntimeError(tr("il.login_not_in"))
 
     def page(self, kind: str, ref: str) -> str:
         return self.main(f"{ILIAS}/goto.php/{kind}/{ref}")
@@ -197,7 +197,7 @@ class Ilias:
     def main(self, url: str) -> str:
         """打开一个页面，只返回正文部分（<main>）。"""
         if self.pages >= MAX_PAGES:
-            raise RuntimeError(f"一次打开超过 {MAX_PAGES} 个页面，已停止（检查 config 里的课程设置）")
+            raise RuntimeError(tr("il.too_many_pages", n=MAX_PAGES))
         self.pages += 1
         time.sleep(0.4)                       # 对服务器客气一点
         _, page = self.get(url)
@@ -424,8 +424,8 @@ def merge(store: list[dict], new: list[dict]) -> list[dict]:
 def format_list(items: list[dict], header: str) -> str:
     lines = [header]
     for d in items:
-        lines.append(f"• [{html.escape(d['course'])}] <b>{html.escape(d['title'])}</b>\n"
-                     f"   ⏰ {fmt_due(d)}，{days_left(d)}")
+        lines.append(tr("il.item", course=html.escape(d["course"]), title=html.escape(d["title"]),
+                       due=fmt_due(d), left=days_left(d)))
     return "\n".join(lines)
 
 
@@ -443,6 +443,7 @@ def main() -> int:
 
     load_env(DATA / ".env")
     cfg = tomllib.loads(Path(args.config).read_text(encoding="utf-8"))
+    i18n.use(cfg)
     icfg = cfg["ilias"]
 
     if args.list:
@@ -459,10 +460,12 @@ def main() -> int:
 
     # 1. iCal
     try:
-        candidates_ical = ical_deadlines(secret(icfg["ical_url_env"]))
+        # 没填 iCal 链接（安装向导里可以跳过）：安静地跳过，不算错误
+        url = os.environ.get(icfg.get("ical_url_env") or "", "").strip()
+        candidates_ical = ical_deadlines(url) if url else []
     except Exception as e:
         candidates_ical = []
-        errors.append(f"读 ILIAS 日历失败：{e}")
+        errors.append(tr("il.ical_failed", err=e))
 
     # 2+3. 登录 + 抓取
     texts, pdfs, forums = [], [], {}
@@ -478,7 +481,7 @@ def main() -> int:
                 texts += t
                 pdfs += p
             except Exception as e:
-                errors.append(f"{course['name']}：{e}")
+                errors.append(tr("il.named_err", name=course["name"], err=e))
         n_texts = len(texts)
         if forums:
             state["forums"] = forums          # 论坛列表：机器人追问论坛时用
@@ -486,7 +489,7 @@ def main() -> int:
             try:
                 txt = il.pdf_text(p["ref"])
             except Exception as e:
-                errors.append(f"读 PDF 失败（{p['where']}）：{e}")
+                errors.append(tr("il.pdf_failed", where=p["where"], err=e))
                 continue
             state["seen"][f"file:{p['ref']}"] = 1
             if txt:
@@ -511,11 +514,11 @@ def main() -> int:
                 errors += ferr
                 print(f"论坛：{len(forums)} 个，新帖总结：{'有' if forum_msg else '无'}")
             except Exception as e:
-                errors.append(f"论坛总结失败：{e}")
+                errors.append(tr("il.forum_failed", err=e))
         print(f"打开了 {il.pages} 个页面；新的带日期文字 {n_texts} 段，"
               f"新的作业 PDF {len(pdfs)} 个")
     except Exception as e:
-        errors.append(f"ILIAS：{e}")
+        errors.append(tr("il.named_err", name="ILIAS", err=e))
 
     # iCal 里的练习对应哪门课
     names = {str(c["crs"]): c["name"] for c in icfg["courses"]}
@@ -529,7 +532,7 @@ def main() -> int:
         found, tokens = llm_extract(texts, cfg["llm"])
         candidates += found
     except Exception as e:
-        errors.append(f"AI 提取失败：{e}")
+        errors.append(tr("il.ai_failed", err=e))
 
     # 手动添加的截止时间（config.toml 里的 [[ilias.manual]]）
     for m in icfg.get("manual", []):
@@ -550,17 +553,16 @@ def main() -> int:
     # 推送：第一次运行（或重装后）列出全部，方便检查有没有漏；以后只发新出现的
     msg = []
     if first_run:
-        msg.append(format_list(future, f"📚 <b>ILIAS 截止时间已开始跟踪</b>（共 {len(future)} 个，"
-                                       f"请检查有没有漏）"))
+        msg.append(format_list(future, tr("il.first", n=len(future))))
     elif added:
-        msg.append(format_list(added, f"📚 <b>ILIAS 新作业 / 截止时间</b>"))
+        msg.append(format_list(added, tr("il.new")))
     if errors:
         last = state.get("last_error_sent", "")
         if first_run or not last or now() - dt.datetime.fromisoformat(last) > dt.timedelta(hours=24):
             msg.append("⚠️ " + "\n⚠️ ".join(html.escape(e) for e in errors))
             state["last_error_sent"] = now().isoformat(timespec="minutes")
     if msg:
-        msg.append(f"<i>截止前 3 天起每天 07:00 提醒，截止前 3 小时再提醒一次（{tokens} token）</i>")
+        msg.append(tr("il.footer", tokens=tokens))
 
     if args.dry_run:
         if forum_msg:

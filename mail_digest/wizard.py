@@ -23,7 +23,7 @@ from pathlib import Path
 
 import i18n
 import mail_imap
-from digest import DATA
+from common import DATA
 
 HERE = Path(__file__).resolve().parent
 CONFIG = DATA / "config.toml"

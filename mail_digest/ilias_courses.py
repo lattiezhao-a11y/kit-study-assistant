@@ -2,19 +2,19 @@
 """List all ILIAS courses and Tutorium groups joined by the user without using tokens.
 
 The “Meine Kurse und Gruppen” page groups memberships by semester. Group pages are
-opened to identify their parent courses. setup.py and its --courses mode use these functions.
+opened to identify their parent courses. wizard.py and its --courses mode use these functions.
 """
 from __future__ import annotations
 
 import argparse
 import datetime as dt
-import html
 import re
 import sys
 import tomllib
 from pathlib import Path
 
 import i18n
+from common import strip_tags
 
 MEMBERSHIP_URL = "/ilias.php?baseClass=ilmembershipoverviewgui"
 HEADING = re.compile(r"<h[1-6][^>]*>(.*?)</h[1-6]>", re.S)
@@ -22,10 +22,6 @@ ITEM = re.compile(r'goto\.php/(crs|grp)/(\d+)')
 # Semester-title examples: WS 26/27, WS 2026/27, SS 2026, SoSe 2026, WiSe 26/27.
 SEMESTER = re.compile(r"^(WS|SS|WiSe|SoSe)\s*(\d{2}|\d{4})(?:\s*/\s*(\d{2}|\d{4}))?$", re.I)
 MAX_GROUP_LOOKUPS = 20     # Maximum Tutorium pages opened to identify their parent courses.
-
-
-def _text(fragment: str) -> str:
-    return re.sub(r"\s+", " ", html.unescape(re.sub(r"<[^>]+>", " ", fragment))).strip()
 
 
 def semester_key(label: str | None) -> tuple[int, int] | None:
@@ -73,7 +69,7 @@ def parse_memberships(page: str) -> list[dict]:
     for m in HEADING.finditer(page):
         inner = m.group(1)
         link = ITEM.search(inner)
-        text = _text(inner)
+        text = strip_tags(inner)
         if link:
             key = (link.group(1), link.group(2))
             if key not in seen and text:
@@ -153,7 +149,7 @@ def format_courses(items: list[dict], tracked: set[int] = frozenset()) -> str:
 
 
 def main() -> int:
-    from digest import DATA, load_env, secret
+    from common import DATA, load_env, secret
     from ilias_sync import Ilias
 
     ap = argparse.ArgumentParser(description="列出我在 ILIAS 加入的所有课程和 Tutorium（只读）/ "
@@ -165,7 +161,7 @@ def main() -> int:
     if hasattr(sys.stdout, "reconfigure"):
         sys.stdout.reconfigure(encoding="utf-8")
     load_env(DATA / ".env")
-    cfg = tomllib.loads(Path(args.config).read_text(encoding="utf-8"))
+    cfg = tomllib.loads(Path(args.config).readstrip_tags(encoding="utf-8"))
     i18n.use(cfg)
     icfg = cfg["ilias"]
     il = Ilias(icfg["user"], secret(icfg["password_env"]))

@@ -52,7 +52,7 @@ git clone https://github.com/lattiezhao-a11y/kit-study-assistant.git
 cd kit-study-assistant
 mkdir data
 docker compose build
-docker compose run --rm assistant python3 setup.py
+docker compose run --rm assistant python3 wizard.py
 ```
 
 向导先问你用中文还是德语，然后登录 ILIAS 列出你的课程，这学期的已经勾好；每个密码填完马上检查；你给机器人发一句话，它就自动找到你的 chat ID。
@@ -93,7 +93,7 @@ docker compose logs -f      # 看它在做什么（按 Ctrl+C 退出查看，程
 ```bash
 docker compose logs -f --tail 100                     # 看最近的日志
 docker compose restart                                # 改了 data/config.toml 或 data/.env 之后
-docker compose run --rm assistant python3 setup.py --courses && docker compose restart   # 新学期：重新选课程
+docker compose run --rm assistant python3 wizard.py --courses && docker compose restart   # 新学期：重新选课程
 git pull && docker compose up -d --build              # 更新到最新版本
 docker compose run --rm assistant python3 tests/run_tests.py --no-llm   # 自检，0 token
 docker compose down                                   # 停止

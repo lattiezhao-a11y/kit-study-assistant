@@ -6,7 +6,7 @@ the tool list to DeepSeek, executes up to MAX_TOOL_ROUNDS requested tool calls,
 and sends the final response back to Telegram. Conversation memory expires after
 IDLE_MINUTES or immediately on /new.
 
-Tools live in tools.py and can be tested individually with:
+Tools live in the tools/ package and can be tested individually with:
   python3 bot.py --tool TOOL_NAME '{"argument": "value"}'
 The AI may only propose settings changes; the program applies them after the user
 confirms. /start and /language select the UI language; see i18n.py.
@@ -28,17 +28,14 @@ import traceback
 import urllib.error
 import urllib.request
 from pathlib import Path
-from zoneinfo import ZoneInfo
 
 import i18n
 import tools
-from digest import DATA, load_env, secret
+from common import DATA, TZ, load_env, load_json, now, save_json, secret
 from i18n import tr
 from tools import TOOLS
 
-HERE = Path(__file__).resolve().parent
 STATE_FILE = DATA / "bot_state.json"     # Telegram update offset and daily token usage.
-TZ = ZoneInfo("Europe/Berlin")
 IDLE_MINUTES = 60          # Clear conversation memory after this many idle minutes.
 MAX_HISTORY = 16           # Maximum number of recent user and assistant messages retained.
 MAX_TOOL_ROUNDS = 6        # Maximum tool-call rounds for one user message.
@@ -60,20 +57,12 @@ COMMANDS = ("start", "language", "new", "usage", "help")    # Commands shown in 
 
 # ---------------------------------------------------------------- State and usage
 
-def now() -> dt.datetime:
-    return dt.datetime.now(TZ)
-
-
 def load_state() -> dict:
-    if STATE_FILE.exists():
-        return json.loads(STATE_FILE.read_text(encoding="utf-8"))
-    return {"offset": None, "usage": {}}
+    return load_json(STATE_FILE, {"offset": None, "usage": {}})
 
 
 def save_state(state: dict) -> None:
-    tmp = STATE_FILE.with_suffix(".tmp")
-    tmp.write_text(json.dumps(state, ensure_ascii=False, indent=1), encoding="utf-8")
-    tmp.replace(STATE_FILE)
+    save_json(STATE_FILE, state)
 
 
 def add_usage(state: dict, usage: dict) -> None:
@@ -394,7 +383,7 @@ def main() -> int:
     cfg = tomllib.loads(Path(args.config).read_text(encoding="utf-8"))
     i18n.use(cfg)
     tools.CFG.update(cfg)
-    tools.CONFIG_PATH = Path(args.config)
+    tools.base.CONFIG_PATH = Path(args.config)
     cfg = tools.CFG                                   # Settings changes refresh this shared configuration object.
 
     if args.tool:

@@ -23,9 +23,10 @@ from pathlib import Path
 
 HERE = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(HERE))
+import common  # noqa: E402
 import digest  # noqa: E402
 
-digest.load_env(digest.DATA / ".env")
+common.load_env(common.DATA / ".env")
 import bot  # noqa: E402
 import i18n  # noqa: E402
 import ilias_sync  # noqa: E402
@@ -33,21 +34,21 @@ import tools  # noqa: E402
 
 TMP = Path(tempfile.mkdtemp(prefix="bottest-"))
 for f in ("deadlines.json", "config.toml", "ilias_state.json"):
-    if (digest.DATA / f).exists():
-        shutil.copy2(digest.DATA / f, TMP / f)
+    if (common.DATA / f).exists():
+        shutil.copy2(common.DATA / f, TMP / f)
 ilias_sync.DEADLINES_FILE = TMP / "deadlines.json"
 ilias_sync.LOCK_FILE = TMP / "deadlines.lock"
 ilias_sync.STATE_FILE = TMP / "ilias_state.json"
-tools.TODO_FILE = TMP / "todos.json"
-tools.TIMETABLE_FILE = TMP / "timetable.json"
-tools.CONFIG_PATH = TMP / "config.toml"
-tools.BACKUP_DIR = TMP / "backup"
+tools.base.TODO_FILE = TMP / "todos.json"
+tools.base.TIMETABLE_FILE = TMP / "timetable.json"
+tools.base.CONFIG_PATH = TMP / "config.toml"
+tools.base.BACKUP_DIR = TMP / "backup"
 # Copies begin in Chinese so language-switch tests remain meaningful.
-_cfg_text = tools.CONFIG_PATH.read_text(encoding="utf-8")
-tools.CONFIG_PATH.write_text(re.sub(r'(?m)^language\s*=\s*"[^"]*"', 'language = "zh"', _cfg_text), encoding="utf-8")
-CFG = tomllib.loads(tools.CONFIG_PATH.read_text(encoding="utf-8"))
+_cfg_text = tools.base.CONFIG_PATH.read_text(encoding="utf-8")
+tools.base.CONFIG_PATH.write_text(re.sub(r'(?m)^language\s*=\s*"[^"]*"', 'language = "zh"', _cfg_text), encoding="utf-8")
+CFG = tomllib.loads(tools.base.CONFIG_PATH.read_text(encoding="utf-8"))
 tools.CFG.update(CFG)
-ORIG_CONFIG = tools.CONFIG_PATH.read_text(encoding="utf-8")
+ORIG_CONFIG = tools.base.CONFIG_PATH.read_text(encoding="utf-8")
 i18n.LANG = "zh"                 # The following assertions use Chinese; German is tested separately in part_lang.
 
 results: list[tuple[str, bool, str]] = []
@@ -125,7 +126,7 @@ def part_net() -> None:
     print("\n========== Telegram 连接（0 token，不发消息）==========")
     import socket
     import time as _t
-    tg = bot.Telegram(digest.secret(CFG["telegram"]["bot_token_env"]))
+    tg = bot.Telegram(common.secret(CFG["telegram"]["bot_token_env"]))
     took = []
     for _ in range(5):
         t = _t.time()
@@ -169,10 +170,10 @@ def part_scheduler() -> None:
     import tempfile as _tf
     # DATA_DIR defaults to the source directory; Docker sets it explicitly.
     check("DATA_DIR 不设置 → 数据就在代码文件夹",
-          "DATA_DIR" in os.environ or digest.DATA == HERE.resolve(), str(digest.DATA))
+          "DATA_DIR" in os.environ or common.DATA == HERE.resolve(), str(common.DATA))
     with _tf.TemporaryDirectory() as d:
-        out = subprocess.run([sys.executable, "-c", "import digest, tools, ilias_sync, bot;"
-                              "print(digest.DATA, tools.TODO_FILE.parent, "
+        out = subprocess.run([sys.executable, "-c", "import common, tools, ilias_sync, bot;"
+                              "print(common.DATA, tools.base.TODO_FILE.parent, "
                               "ilias_sync.DEADLINES_FILE.parent, bot.STATE_FILE.parent)"],
                              cwd=HERE, env={**os.environ, "DATA_DIR": d},
                              capture_output=True, text=True)
@@ -218,7 +219,7 @@ def part_regressions() -> None:
     import ssl
     from unittest.mock import patch
     import mail_imap
-    import setup
+    import wizard
 
     account = {"name": "test", "host": "imap.example.invalid", "user": "fixture",
                "password_env": "TEST_IMAP_PASSWORD"}
@@ -229,8 +230,8 @@ def part_regressions() -> None:
         conn.response.return_value = ("UIDVALIDITY", [b"1"])
         conn.uid.return_value = ("OK", [b""])
         digest.fetch_account(account, {}, 1, 10, 100)
-        tools._close(tools._imap(account))
-        setup.check_imap(account["host"], account["user"], "fixture")
+        tools.mail._close(tools.mail._imap(account))
+        wizard.check_imap(account["host"], account["user"], "fixture")
         contexts = [c.kwargs["ssl_context"] for c in connect.call_args_list]
         check("三个 IMAP 入口都验证证书和主机名", len(contexts) == 3 and all(
             ctx.verify_mode == ssl.CERT_REQUIRED and ctx.check_hostname for ctx in contexts))
@@ -281,18 +282,18 @@ def part_a() -> None:
     check("默认只列已发布的作业，没发布的和考试只说个数",
           shown + hidden == n_active and len(re.findall(r"^#\d+ ", full, re.M)) == n_active, out[-300:])
     week = call("ddl_list", this_week=True)
-    sunday = (tools.now().date() + __import__("datetime").timedelta(days=6 - tools.now().weekday()))
+    sunday = (common.now().date() + __import__("datetime").timedelta(days=6 - common.now().weekday()))
     days_in_week = [(int(m), int(d)) for m, d in re.findall(r"— (\d+)/(\d+) 周", week)]
     check("this_week 只到这周日", "这周，到" in week and all(
         (m, d) <= (sunday.month, sunday.day) for m, d in days_in_week), week[:300])
     pub = {"GKI": [1, 2]}
     check("发布判断：有发布日期看日期，没有看 ILIAS 里的编号",
-          tools.released({"source": "ilias", "title": "Übung 4", "course": "GKI", "release": "2099-01-01"}, pub) is False
-          and tools.released({"source": "ilias", "title": "Übung 3", "course": "GKI", "release": "2000-01-01"}, pub)
-          and tools.released({"source": "ilias", "title": "Übung 2 Deadline", "course": "GKI"}, pub)
-          and not tools.released({"source": "ilias", "title": "Übung 5 Deadline", "course": "GKI"}, pub)
-          and tools.released({"source": "ilias", "title": "Übung 5", "course": "TGI"}, pub)
-          and tools.released({"source": "manual", "title": "Blatt 9", "course": "GKI"}, pub))
+          tools.ddl.released({"source": "ilias", "title": "Übung 4", "course": "GKI", "release": "2099-01-01"}, pub) is False
+          and tools.ddl.released({"source": "ilias", "title": "Übung 3", "course": "GKI", "release": "2000-01-01"}, pub)
+          and tools.ddl.released({"source": "ilias", "title": "Übung 2 Deadline", "course": "GKI"}, pub)
+          and not tools.ddl.released({"source": "ilias", "title": "Übung 5 Deadline", "course": "GKI"}, pub)
+          and tools.ddl.released({"source": "ilias", "title": "Übung 5", "course": "TGI"}, pub)
+          and tools.ddl.released({"source": "manual", "title": "Blatt 9", "course": "GKI"}, pub))
     out = call("ddl_add", course="Robotics I", title="测试作业", date="2026-12-01", time="10:00")
     m = re.search(r"#(\d+)", out)
     check("ddl_add 新增", out.startswith("已添加") and m, out)
@@ -317,7 +318,7 @@ def part_a() -> None:
     out = call("todo_add", text="去银行开户", date="2026-11-25", time="10:30")
     check("todo_add", out.startswith("已记下") and "10:30" in out, out)
     import remind
-    remind.TODO_FILE = tools.TODO_FILE
+    remind.TODO_FILE = tools.base.TODO_FILE
     items = remind.todo_items()
     check("有日期的待办会进提醒", len(items) == 1 and items[0]["due"].startswith("2026-11-25T10:30")
           and items[0]["time_known"], str(items))
@@ -334,7 +335,7 @@ def part_a() -> None:
     check("schedule 有课表和日期", "11/30 周一" in out and "Betriebssysteme" in out, out)
     check("timetable_list / remove", "课#1" in call("timetable_list")
           and "已从课表删除" in call("timetable_remove", id=1))
-    tools.save_json(tools.TODO_FILE, [])
+    common.save_json(tools.base.TODO_FILE, [])
     out = call("schedule")
     check("schedule 今天（读 ILIAS 日历）", "失败" not in out, out)
 
@@ -350,7 +351,7 @@ def part_a() -> None:
     for st in steps:
         out = call("settings_change", **st)
         ok_pending = "还没生效" in out and tools.PENDING.get("settings")
-        unchanged = tools.CONFIG_PATH.read_text(encoding="utf-8") == ORIG_CONFIG \
+        unchanged = tools.base.CONFIG_PATH.read_text(encoding="utf-8") == ORIG_CONFIG \
             if st is steps[0] else True
         check(f"settings_change {st['key']} 只是提议", ok_pending and unchanged, out)
         try:
@@ -358,7 +359,7 @@ def part_a() -> None:
             check(f"确认后改好 {st['key']}", msg.startswith("✅"), msg)
         except Exception as e:
             check(f"确认后改好 {st['key']}", False, repr(e))
-    new = tomllib.loads(tools.CONFIG_PATH.read_text(encoding="utf-8"))
+    new = tomllib.loads(tools.base.CONFIG_PATH.read_text(encoding="utf-8"))
     exp = copy.deepcopy(CFG)
     exp["llm"]["always_ignore"] = CFG["llm"]["always_ignore"] + ["测试规则：所有来自 example.com 的邮件"]
     exp.setdefault("safety_net", {})["always_important_senders"] = \
@@ -366,8 +367,8 @@ def part_a() -> None:
     exp["ilias"]["quiet_hours"], exp["ilias"]["forum_hour"] = [23, 7], 7
     exp.setdefault("job", {})["job_search"] = True
     check("config.toml 只改了这 5 项", new == exp)
-    check("注释都还在", tools.CONFIG_PATH.read_text(encoding="utf-8").count("#") >= n_comments)
-    check("每次改动前都有备份", len(list(tools.BACKUP_DIR.glob("config.toml.*"))) >= 1)
+    check("注释都还在", tools.base.CONFIG_PATH.read_text(encoding="utf-8").count("#") >= n_comments)
+    check("每次改动前都有备份", len(list(tools.base.BACKUP_DIR.glob("config.toml.*"))) >= 1)
     # Change it back.
     for st in [dict(key="always_ignore", action="remove", value=str(len(exp["llm"]["always_ignore"]))),
                dict(key="always_important_senders", action="remove", value="tutor@kit.edu"),
@@ -377,12 +378,12 @@ def part_a() -> None:
         call("settings_change", **st)
         if tools.PENDING.get("settings"):
             tools.apply_pending()
-    back = tomllib.loads(tools.CONFIG_PATH.read_text(encoding="utf-8"))
+    back = tomllib.loads(tools.base.CONFIG_PATH.read_text(encoding="utf-8"))
     check("改回去以后和原来的设置一样", all(
         back.get(s, {}).get(k) == CFG.get(s, {}).get(k)
-        for k, (s, *_) in tools.SETTINGS.items() if k in CFG.get(s, {})))
+        for k, (s, *_) in tools.settings.SETTINGS.items() if k in CFG.get(s, {})))
     check("不能改的设置被拒绝", "工具出错" in call("settings_change", key="password", action="set", value="x"))
-    tools.CONFIG_PATH.write_text(ORIG_CONFIG, encoding="utf-8")
+    tools.base.CONFIG_PATH.write_text(ORIG_CONFIG, encoding="utf-8")
     tools.CFG.clear(), tools.CFG.update(CFG)
 
     # Add and remove about_me one line at a time; the “not interested” preference is learned here.
@@ -392,7 +393,7 @@ def part_a() -> None:
     check("about_me add 只是提议，预览里有新的一行和说明",
           "还没生效" in out and "不感兴趣：测试用的一类东西" in pv and "⚪ 忽略" in pv, pv)
     tools.apply_pending()
-    me = tomllib.loads(tools.CONFIG_PATH.read_text(encoding="utf-8"))["llm"]["about_me"]
+    me = tomllib.loads(tools.base.CONFIG_PATH.read_text(encoding="utf-8"))["llm"]["about_me"]
     check("about_me 加在最后一行，原来的内容都还在",
           me.splitlines()[-1] == "不感兴趣：测试用的一类东西" and all(
               ln.strip() in me for ln in old_me.splitlines() if ln.strip()), me)
@@ -401,17 +402,17 @@ def part_a() -> None:
         "settings_change", key="about_me", action="add", value="不感兴趣：测试用的一类东西"))
     call("settings_change", key="about_me", action="remove", value="测试用的一类")
     tools.apply_pending()
-    me = tomllib.loads(tools.CONFIG_PATH.read_text(encoding="utf-8"))["llm"].get("about_me", "")
-    check("about_me 按内容删掉一行后和原来一样", tools._lines(me) == tools._lines(old_me), me)
-    tools.CONFIG_PATH.write_text(ORIG_CONFIG, encoding="utf-8")
+    me = tomllib.loads(tools.base.CONFIG_PATH.read_text(encoding="utf-8"))["llm"].get("about_me", "")
+    check("about_me 按内容删掉一行后和原来一样", tools.settings._lines(me) == tools.settings._lines(old_me), me)
+    tools.base.CONFIG_PATH.write_text(ORIG_CONFIG, encoding="utf-8")
     tools.CFG.clear(), tools.CFG.update(CFG)
 
     # Removing a mail-derived reminder suggests “not interested”; manual items do not.
     with ilias_sync.locked_store() as store:
-        tools._ensure_ids(store)
+        tools.ddl._ensure_ids(store)
         store.append({"course": "📧 测试项目", "title": "测试：跨校短期课程申请",
                       "due": "2099-01-05T00:00+01:00", "time_known": False, "source": "mail"})
-        tools._ensure_ids(store)
+        tools.ddl._ensure_ids(store)
         mid_ = store[-1]["id"]
     out = call("ddl_delete", id=mid_)
     check("删除邮件来的提醒时提示 AI 学「不感兴趣」", "已删除" in out and "key=about_me" in out, out)
@@ -452,16 +453,16 @@ def part_a() -> None:
     check("mail_read 格式错误给提示", "格式" in call("mail_read", id="abc"))
 
     # O6: create the forum list in the copy; real data is generated by the next ILIAS check.
-    state = tools.load_json(ilias_sync.STATE_FILE, {})
+    state = common.load_json(ilias_sync.STATE_FILE, {})
     if not state.get("forums"):
-        il = tools._ilias()
+        il = tools.forum._ilias()
         il.pages = -400                    # Allow additional page requests during testing.
         fs: dict = {}
         skip = re.compile(CFG["ilias"]["skip_folders"], re.I) if CFG["ilias"].get("skip_folders") else None
         for c in CFG["ilias"]["courses"]:
             ilias_sync.crawl(il, c, copy.deepcopy(state.get("seen", {})), skip, {}, fs)
         state["forums"] = fs
-        tools.save_json(ilias_sync.STATE_FILE, state)
+        common.save_json(ilias_sync.STATE_FILE, state)
         print(f"   （副本里生成了论坛列表：{len(fs)} 个论坛）")
     out = call("forum_recent", days=14)
     show(out, 600)
@@ -490,7 +491,7 @@ def german(s: str) -> bool:
 
 
 def restore_config() -> None:
-    tools.CONFIG_PATH.write_text(ORIG_CONFIG, encoding="utf-8")
+    tools.base.CONFIG_PATH.write_text(ORIG_CONFIG, encoding="utf-8")
     tools.CFG.clear(), tools.CFG.update(CFG)
     tools.PENDING.clear()
     i18n.LANG = "zh"
@@ -507,7 +508,7 @@ def part_lang() -> None:
     check("每句固定文字都有中文和德语，而且要填的内容一样", not bad, str(bad))
     bad = [k for k, v in i18n.TEXTS.items() if not k.startswith("ai.") and not no_chinese(v["de"])]
     check("德语版里没有汉字", not bad, str(bad))
-    check("每个能改的设置都有德语说明", set(i18n.SETTING_DESC_DE) == set(tools.SETTINGS))
+    check("每个能改的设置都有德语说明", set(i18n.SETTING_DESC_DE) == set(tools.settings.SETTINGS))
     check("没写语言 / 写错了 → 中文", i18n.lang_of({}) == "zh" and i18n.lang_of({"general": {"language": "fr"}}) == "zh"
           and i18n.lang_of({"general": {"language": "DE"}}) == "de")
     check("德语里有「确认」的说法", {"ja", "bestätigen"} <= bot.CONFIRM_WORDS)
@@ -555,20 +556,20 @@ def part_lang() -> None:
     i18n.LANG = "zh"
 
     # Language switch: update only config.toml's language entry, preserve comments, and make a backup.
-    n_backup = len(list(tools.BACKUP_DIR.glob("config.toml.*"))) if tools.BACKUP_DIR.exists() else 0
+    n_backup = len(list(tools.base.BACKUP_DIR.glob("config.toml.*"))) if tools.base.BACKUP_DIR.exists() else 0
     changed = tools.set_language("de")
-    new = tomllib.loads(tools.CONFIG_PATH.read_text(encoding="utf-8"))
+    new = tomllib.loads(tools.base.CONFIG_PATH.read_text(encoding="utf-8"))
     exp = copy.deepcopy(CFG)
     exp.setdefault("general", {})["language"] = "de"
     check("切换到德语：config 里只多了 language = de，马上生效",
           changed and new == exp and i18n.LANG == "de" and tools.CFG == exp)
     check("切换语言时注释都还在、改之前有备份",
-          tools.CONFIG_PATH.read_text(encoding="utf-8").count("#") >= ORIG_CONFIG.count("#")
-          and len(list(tools.BACKUP_DIR.glob("config.toml.*"))) > n_backup)
+          tools.base.CONFIG_PATH.read_text(encoding="utf-8").count("#") >= ORIG_CONFIG.count("#")
+          and len(list(tools.base.BACKUP_DIR.glob("config.toml.*"))) > n_backup)
     check("已经是德语再切一次：不改", tools.set_language("de") is False)
     out = call("language_set", language="zh")
     check("language_set 工具切回中文", "已切换为中文" in out and i18n.LANG == "zh"
-          and tomllib.loads(tools.CONFIG_PATH.read_text(encoding="utf-8"))["general"]["language"] == "zh", out)
+          and tomllib.loads(tools.base.CONFIG_PATH.read_text(encoding="utf-8"))["general"]["language"] == "zh", out)
     check("不支持的语言被拒绝", "工具出错" in call("language_set", language="fr") and i18n.LANG == "zh")
 
     # Buttons: fake Telegram sends Chinese and German choices without delivering messages.
@@ -649,10 +650,10 @@ def part_b() -> None:
             if d["course"] == "Betriebssysteme" and "03" in d["title"]:
                 for k in ("done", "done_at", "deleted"):
                     d.pop(k, None)
-        tools._ensure_ids(store)                # Mail-added opportunity used to test learning after deletion.
+        tools.ddl._ensure_ids(store)                # Mail-added opportunity used to test learning after deletion.
         store.append({"course": "📧 KIT International", "title": "Summer School 2027 申请截止",
                       "due": "2099-03-01T00:00+01:00", "time_known": False, "source": "mail"})
-        tools._ensure_ids(store)
+        tools.ddl._ensure_ids(store)
     for text, need, keep, must in CASES:
         if not keep:
             history = []
@@ -678,10 +679,10 @@ def part_b() -> None:
         ok = ok and not re.search(r"#\d|KIT:\d|Gmail:\d|\d{6,}/\d{5,}", reply)   # Do not expose identifiers.
         if "settings_change" in need:
             ok = ok and bool(tools.PENDING.get("settings")) and \
-                tools.CONFIG_PATH.read_text(encoding="utf-8") == ORIG_CONFIG
+                tools.base.CONFIG_PATH.read_text(encoding="utf-8") == ORIG_CONFIG
         if "不感兴趣" in text or "Summer School" in text:   # Write learned preferences to about_me as “not interested”.
             p = tools.PENDING.get("settings") or {}
-            row = (tools._lines(p.get("new", "")) or [""])[-1]
+            row = (tools.settings._lines(p.get("new", "")) or [""])[-1]
             ok = ok and p.get("key") == "about_me" and row.startswith("不感兴趣")
             show(f"提议加的一行：{row}", 120)
         check(f"「{text}」→ {used or '不用工具'}", ok, f"需要 {need or '不用工具'}；回答：{reply[:200]}")
@@ -693,7 +694,7 @@ def part_b() -> None:
     print(f"\nB 部分共 {n_calls} 次 AI 调用，{tin + tout:,} token，"
           f"约 ${(tin * bot.PRICE_IN + tout * bot.PRICE_OUT) / 1e6:.3f}")
     check("AI 没有自己改掉设置（真正修改要我回复「确认」）",
-          tools.CONFIG_PATH.read_text(encoding="utf-8") == ORIG_CONFIG)
+          tools.base.CONFIG_PATH.read_text(encoding="utf-8") == ORIG_CONFIG)
 
     # Switch language in chat immediately, converse in German, then switch back.
     print("\n   —— 语言 ——")
@@ -712,7 +713,7 @@ def part_b() -> None:
                 traceback.print_exc()
                 check(f"「{text}」", False, repr(e))
                 continue
-            conf = tomllib.loads(tools.CONFIG_PATH.read_text(encoding="utf-8"))
+            conf = tomllib.loads(tools.base.CONFIG_PATH.read_text(encoding="utf-8"))
             ok = need <= set(used) and i18n.LANG == lang and i18n.lang_of(conf) == lang
             ok = ok and (german(reply) if lang == "de" else bool(CJK.search(reply)))
             ok = ok and not re.search(r"#\d|KIT:\d|Gmail:\d|\d{6,}/\d{5,}", reply)

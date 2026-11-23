@@ -91,7 +91,7 @@ flowchart LR
         F["forums.py<br/>Forum-Zusammenfassung"]
         DATA[("Fristen · To-dos<br/>Stundenplan · Einstellungen")]
         R["remind.py<br/>Übersicht + Erinnerungen<br/>0 Token"]
-        B["bot.py + tools.py<br/>Chat"]
+        B["bot.py + tools/<br/>Chat"]
     end
     MAIL --> D
     ILIAS --> I
@@ -152,7 +152,7 @@ Außerdem brauchst du einen Telegram-Bot-Token von [@BotFather](https://t.me/Bot
 git clone https://github.com/lattiezhao-a11y/kit-study-assistant.git
 cd kit-study-assistant
 mkdir data
-docker compose run --rm assistant python3 setup.py              # Einrichtungsassistent, ca. 5 Minuten
+docker compose run --rm assistant python3 wizard.py              # Einrichtungsassistent, ca. 5 Minuten
 docker compose run --rm assistant python3 digest.py --dry-run   # Test, sendet nichts
 docker compose up -d                                            # starten
 ```
@@ -171,7 +171,7 @@ sudo apt install poppler-utils
 git clone https://github.com/lattiezhao-a11y/kit-study-assistant.git
 cd kit-study-assistant/mail_digest
 
-python3 setup.py                             # Einrichtungsassistent: schreibt config.toml und .env
+python3 wizard.py                             # Einrichtungsassistent: schreibt config.toml und .env
 
 python3 digest.py --dry-run --no-llm         # Mails lesen, nur ausgeben, ohne KI, ohne Telegram
 python3 digest.py --dry-run                  # mit KI, weiterhin nur ausgeben
@@ -193,7 +193,7 @@ Die Unit-Dateien gehen vom Benutzer `pi` und dem Pfad `/home/pi/mail_digest` aus
 
 ### Der Einrichtungsassistent
 
-`setup.py` fragt zuerst nach deiner Sprache (Deutsch oder Chinesisch), dann stellt er eine Frage nach der anderen und prüft jede Antwort sofort:
+`wizard.py` fragt zuerst nach deiner Sprache (Deutsch oder Chinesisch), dann stellt er eine Frage nach der anderen und prüft jede Antwort sofort:
 
 - **KIT-Konto:** meldet sich bei ILIAS und im KIT-Postfach an (nur lesend), Tippfehler fallen also sofort auf
 - **Kurse:** **listet alle Kurse auf, in denen du in ILIAS bist**, nach Semester sortiert, die aus diesem Semester schon ausgewählt. Deine Tutorien werden automatisch den richtigen Kursen zugeordnet, du musst also nie Kursnummern aus URLs abschreiben
@@ -203,7 +203,7 @@ Die Unit-Dateien gehen vom Benutzer `pi` und dem Pfad `/home/pi/mail_digest` aus
 Passwörter werden unsichtbar eingegeben und nur in `.env` geschrieben (`chmod 600`). Gespeichert wird erst nach der letzten Frage, und Strg+C ändert nichts.
 Lieber von Hand ausfüllen? Dann `config.example.toml` und `.env.example` kopieren.
 
-**Neues Semester?** `python3 setup.py --courses` wählt die Kurse neu und lässt alle anderen Einstellungen in Ruhe.
+**Neues Semester?** `python3 wizard.py --courses` wählt die Kurse neu und lässt alle anderen Einstellungen in Ruhe.
 Nur deine Kurse ansehen: `python3 ilias_courses.py`.
 
 ## Tests
@@ -211,7 +211,7 @@ Nur deine Kurse ansehen: `python3 ilias_courses.py`.
 ```bash
 python3 tests/run_tests.py            # über 100 Prüfungen, ca. 0,05 $ an Token
 python3 tests/run_tests.py --no-llm   # nur Werkzeug-Tests, 0 Token
-python3 tests/test_setup.py           # Einrichtungsassistent + Kursliste, offline, 0 Token
+python3 tests/test_wizard.py           # Einrichtungsassistent + Kursliste, offline, 0 Token
 ```
 
 Die Tests arbeiten mit temporären Kopien der Daten. Deine echten Fristen und Einstellungen werden also nie verändert, und an Telegram wird nichts geschickt.
@@ -229,7 +229,7 @@ Teil A ruft jedes Werkzeug direkt auf. Teil B schickt etwa 20 Anfragen in normal
 
 - [x] Docker-Image + Anleitung für Cloud-Server, damit kein Raspberry Pi nötig ist
 - [ ] ILIAS-Instanz und Login konfigurierbar machen, damit andere Unis es nutzen können
-- [x] Interaktiver Einrichtungsassistent (`setup.py`), der deine ILIAS-Kurse auflistet und deine Telegram-Chat-ID findet
+- [x] Interaktiver Einrichtungsassistent (`wizard.py`), der deine ILIAS-Kurse auflistet und deine Telegram-Chat-ID findet
 - [x] Deutsche Version (Bot, Nachrichten, Einrichtungsassistent)
 - [x] GitHub Actions: Docker-Image bauen + Tests, die kein Konto brauchen
 - [ ] Offline-Testdaten (gefälschtes Postfach / ILIAS-Seiten), damit jedes Werkzeug auf GitHub getestet werden kann

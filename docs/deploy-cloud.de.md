@@ -54,7 +54,7 @@ git clone https://github.com/lattiezhao-a11y/kit-study-assistant.git
 cd kit-study-assistant
 mkdir data
 docker compose build
-docker compose run --rm assistant python3 setup.py
+docker compose run --rm assistant python3 wizard.py
 ```
 
 Der Assistent fragt zuerst nach der Sprache (Chinesisch oder Deutsch). Dann meldet er sich bei ILIAS an und listet deine Kurse auf,
@@ -99,7 +99,7 @@ Nur Erinnerungen, ohne Chat-Bot? In `docker-compose.yml` das `#` vor der Zeile `
 ```bash
 docker compose logs -f --tail 100                     # die letzten Log-Zeilen
 docker compose restart                                # nach Änderungen an data/config.toml oder data/.env
-docker compose run --rm assistant python3 setup.py --courses && docker compose restart   # neues Semester: Kurse neu wählen
+docker compose run --rm assistant python3 wizard.py --courses && docker compose restart   # neues Semester: Kurse neu wählen
 git pull && docker compose up -d --build              # auf die neueste Version aktualisieren
 docker compose run --rm assistant python3 tests/run_tests.py --no-llm   # Selbsttest, 0 Token
 docker compose down                                   # stoppen

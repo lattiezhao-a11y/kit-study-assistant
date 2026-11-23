@@ -13,7 +13,6 @@ import email
 import email.policy
 import html
 import json
-import os
 import re
 import sys
 import tomllib
@@ -24,12 +23,9 @@ from pathlib import Path
 
 import i18n
 import mail_imap
+from common import DATA, load_env, load_json, save_json, secret, send_telegram
 from i18n import tr
 
-HERE = Path(__file__).resolve().parent
-# Data directory for config.toml, .env, and all JSON files.
-# By default it is the source directory; Docker uses DATA_DIR=/data to separate data from code.
-DATA = Path(os.environ.get("DATA_DIR") or HERE).resolve()
 MAX_FULL_BYTES = 1_500_000  # Above this size, read only email headers, usually to avoid large attachments.
 IGNORED_LIST_MAX = 60       # Maximum number of ignored messages listed individually in the digest.
 
@@ -53,39 +49,6 @@ class Mail:
     kind: str = "duty"     # “duty” has consequences if missed; “chance” is optional.
     reminder: str = ""     # “added” was added, “dup” already exists, and “chance” is not added.
     by: str = ""           # "llm" / "safety-net"
-
-
-# ---------------------------------------------------------------- Configuration and state
-
-def load_env(path: Path) -> None:
-    """Load KEY=VALUE entries from .env without overriding existing environment variables."""
-    if not path.exists():
-        return
-    for line in path.read_text(encoding="utf-8").splitlines():
-        line = line.strip()
-        if not line or line.startswith("#") or "=" not in line:
-            continue
-        k, v = line.split("=", 1)
-        os.environ.setdefault(k.strip(), v.strip().strip('"').strip("'"))
-
-
-def secret(name: str) -> str:
-    val = os.environ.get(name, "")
-    if not val:
-        raise RuntimeError(tr("env.missing", name=name))
-    return val
-
-
-def load_state(path: Path) -> dict:
-    if path.exists():
-        return json.loads(path.read_text(encoding="utf-8"))
-    return {}
-
-
-def save_state(path: Path, state: dict) -> None:
-    tmp = path.with_suffix(".tmp")
-    tmp.write_text(json.dumps(state, indent=2), encoding="utf-8")
-    tmp.replace(path)
 
 
 # ---------------------------------------------------------------- Email cleanup
@@ -432,28 +395,6 @@ def build_digest(mails: list[Mail], errors: list[str], tokens: int) -> str:
     return "\n".join(lines)
 
 
-def send_telegram(text: str, cfg: dict) -> None:
-    token = secret(cfg["bot_token_env"])
-    chat_id = secret(cfg["chat_id_env"])
-    url = f"https://api.telegram.org/bot{token}/sendMessage"
-    chunks, cur = [], ""
-    for line in text.split("\n"):           # Telegram limits a single message to 4096 characters.
-        if len(cur) + len(line) + 1 > 3800:
-            chunks.append(cur)
-            cur = ""
-        cur += line + "\n"
-    if cur.strip():
-        chunks.append(cur)
-    for chunk in chunks:
-        body = json.dumps({"chat_id": chat_id, "text": chunk, "parse_mode": "HTML",
-                           "disable_web_page_preview": True}).encode("utf-8")
-        req = urllib.request.Request(url, data=body,
-                                     headers={"Content-Type": "application/json"})
-        with urllib.request.urlopen(req, timeout=30) as r:
-            if not json.load(r).get("ok"):
-                raise RuntimeError("Telegram 推送失败")
-
-
 # ---------------------------------------------------------------- Main flow
 
 def main() -> int:
@@ -469,7 +410,7 @@ def main() -> int:
     i18n.use(cfg)
     gen = cfg.get("general", {})
     state_path = DATA / "state.json"
-    state = load_state(state_path)
+    state = load_json(state_path, {})
     since_days = args.since_days or gen.get("since_days", 1)
 
     mails: list[Mail] = []
@@ -503,7 +444,7 @@ def main() -> int:
     if not mails and not errors and not gen.get("send_when_empty", False):
         print("没有新邮件，不推送。", file=sys.stderr)
         if not args.dry_run:
-            save_state(state_path, state)
+            save_json(state_path, state)
         return 0
 
     digest = build_digest(mails, errors, tokens)
@@ -512,7 +453,7 @@ def main() -> int:
         return 0
 
     send_telegram(digest, cfg["telegram"])
-    save_state(state_path, state)   # Record progress only after a successful send, so failures are retried.
+    save_json(state_path, state)   # Record progress only after a successful send, so failures are retried.
     return 0
 
 

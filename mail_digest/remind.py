@@ -10,23 +10,22 @@ from __future__ import annotations
 import argparse
 import datetime as dt
 import html
-import json
 import re
 import sys
 import tomllib
 from pathlib import Path
 
 import i18n
-from digest import DATA, load_env, send_telegram
+from common import DATA, TZ, load_env, load_json, now, save_json, send_telegram
 from i18n import tr
-from ilias_sync import TZ, locked_store, now, save_json, upcoming
+from ilias_sync import locked_store, upcoming
 
 TODO_FILE = DATA / "todos.json"      # Dated miscellaneous to-dos recorded by the bot are also reminded.
 
 
 def todo_items() -> list[dict]:
     """Convert unfinished dated to-dos to the same format as deadlines."""
-    todos = json.loads(TODO_FILE.read_text(encoding="utf-8")) if TODO_FILE.exists() else []
+    todos = load_json(TODO_FILE, [])
     out = []
     for t in todos:
         if t.get("done") or not t.get("date"):
@@ -45,7 +44,7 @@ def save_todo_reminded(items: list[dict]) -> None:
     done = {d["todo_id"]: d["reminded"] for d in items if "todo_id" in d}
     if not done or not TODO_FILE.exists():
         return
-    todos = json.loads(TODO_FILE.read_text(encoding="utf-8"))
+    todos = load_json(TODO_FILE, [])
     for t in todos:
         if t["id"] in done:
             t["reminded"] = done[t["id"]]

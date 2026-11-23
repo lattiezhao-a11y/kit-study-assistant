@@ -91,7 +91,7 @@ flowchart LR
         F["forums.py<br/>forum digest"]
         DATA[("deadlines · to-dos<br/>timetable · settings")]
         R["remind.py<br/>summary + reminders<br/>0 tokens"]
-        B["bot.py + tools.py<br/>chat"]
+        B["bot.py + tools/<br/>chat"]
     end
     MAIL --> D
     ILIAS --> I
@@ -152,7 +152,7 @@ You also need a Telegram bot token from [@BotFather](https://t.me/BotFather) and
 git clone https://github.com/lattiezhao-a11y/kit-study-assistant.git
 cd kit-study-assistant
 mkdir data
-docker compose run --rm assistant python3 setup.py              # setup wizard, about 5 minutes
+docker compose run --rm assistant python3 wizard.py              # setup wizard, about 5 minutes
 docker compose run --rm assistant python3 digest.py --dry-run   # test, sends nothing
 docker compose up -d                                            # start
 ```
@@ -171,7 +171,7 @@ sudo apt install poppler-utils
 git clone https://github.com/lattiezhao-a11y/kit-study-assistant.git
 cd kit-study-assistant/mail_digest
 
-python3 setup.py                             # setup wizard: writes config.toml and .env
+python3 wizard.py                             # setup wizard: writes config.toml and .env
 
 python3 digest.py --dry-run --no-llm         # read mail, print only, no AI, no Telegram
 python3 digest.py --dry-run                  # with AI, still print only
@@ -193,7 +193,7 @@ The unit files assume the user `pi` and the path `/home/pi/mail_digest`. Edit th
 
 ### The setup wizard
 
-`setup.py` first asks for your language (Chinese or German), then asks one question at a time and checks each answer right away:
+`wizard.py` first asks for your language (Chinese or German), then asks one question at a time and checks each answer right away:
 
 - **KIT account:** logs in to ILIAS and the KIT mailbox (read-only), so a typo shows up immediately
 - **Courses:** **lists every course you joined on ILIAS**, grouped by semester, with this semester's courses pre-selected. Your Tutorium groups are matched to their courses automatically, so you never have to copy course IDs from URLs
@@ -203,7 +203,7 @@ The unit files assume the user `pi` and the path `/home/pi/mail_digest`. Edit th
 Passwords are typed invisibly and only written to `.env` (`chmod 600`). Nothing is saved until the last question is answered, and Ctrl+C changes nothing.
 To fill in the files by hand instead, copy `config.example.toml` and `.env.example`.
 
-**New semester?** `python3 setup.py --courses` picks the courses again and leaves every other setting alone.
+**New semester?** `python3 wizard.py --courses` picks the courses again and leaves every other setting alone.
 To just look at your courses: `python3 ilias_courses.py`.
 
 ## Tests
@@ -211,7 +211,7 @@ To just look at your courses: `python3 ilias_courses.py`.
 ```bash
 python3 tests/run_tests.py            # 100+ checks, about $0.05 of tokens
 python3 tests/run_tests.py --no-llm   # tool tests only, 0 tokens
-python3 tests/test_setup.py           # setup wizard + course list, offline, 0 tokens
+python3 tests/test_wizard.py           # setup wizard + course list, offline, 0 tokens
 ```
 
 The tests work on temporary copies of the data, so your real deadlines and settings are never changed and nothing is sent to Telegram.
@@ -229,7 +229,7 @@ Part A calls every tool directly. Part B sends about 20 natural-language request
 
 - [x] Docker image + cloud deployment guide, so no Raspberry Pi is needed
 - [ ] Configurable ILIAS instance and login, so other universities can use it
-- [x] Interactive setup wizard (`setup.py`) that lists your ILIAS courses and finds your Telegram chat ID
+- [x] Interactive setup wizard (`wizard.py`) that lists your ILIAS courses and finds your Telegram chat ID
 - [x] German version (bot, messages, setup wizard)
 - [x] GitHub Actions: build the Docker image + tests that need no account
 - [ ] Offline test fixtures (fake mailbox / ILIAS pages), so every tool can be tested on GitHub

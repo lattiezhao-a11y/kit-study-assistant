@@ -54,7 +54,7 @@ git clone https://github.com/lattiezhao-a11y/kit-study-assistant.git
 cd kit-study-assistant
 mkdir data
 docker compose build
-docker compose run --rm assistant python3 setup.py
+docker compose run --rm assistant python3 wizard.py
 ```
 
 The wizard first asks for your language (Chinese or German). It logs in to ILIAS and lists your courses, with this semester's already selected. It checks every password right away,
@@ -98,7 +98,7 @@ Only want the reminders, without the chat bot? Uncomment the `command:` line in 
 ```bash
 docker compose logs -f --tail 100                     # recent log
 docker compose restart                                # after editing data/config.toml or data/.env
-docker compose run --rm assistant python3 setup.py --courses && docker compose restart   # new semester: pick courses again
+docker compose run --rm assistant python3 wizard.py --courses && docker compose restart   # new semester: pick courses again
 git pull && docker compose up -d --build              # update to the newest version
 docker compose run --rm assistant python3 tests/run_tests.py --no-llm   # self-test, 0 tokens
 docker compose down                                   # stop

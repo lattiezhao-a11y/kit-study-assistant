@@ -29,7 +29,7 @@ jobs:
         run: docker compose run --rm assistant python3 tests/run_tests.py --format-only
 
       - name: Setup wizard + course list tests
-        run: docker compose run --rm assistant python3 tests/test_setup.py
+        run: docker compose run --rm assistant python3 tests/test_wizard.py
 
       - name: Timetable
         run: docker compose run --rm assistant python3 scheduler.py --list

@@ -12,7 +12,7 @@ import json
 import re
 import urllib.request
 
-from digest import secret
+from common import secret, strip_tags
 from i18n import tr
 
 MAX_THREADS = 40        # Maximum threads summarized per run.
@@ -44,20 +44,16 @@ def parse_date(text: str, today: dt.date) -> str:
     return f"{day.isoformat()}T{int(m.group(5)):02d}:{m.group(6)}"
 
 
-def _text(fragment: str) -> str:
-    return re.sub(r"\s+", " ", html.unescape(re.sub(r"<[^>]+>", " ", fragment))).strip()
-
-
 def thread_list(il, ref: str, today: dt.date) -> list[dict]:
     body = il.page("frm", ref)
     links = list(THREAD_LINK.finditer(body))
     out = []
     for i, m in enumerate(links):
-        title = _text(m.group(3))
+        title = strip_tags(m.group(3))
         if not title:
             continue
         end = links[i + 1].start() if i + 1 < len(links) else len(body)
-        info = _text(body[m.end():end])
+        info = strip_tags(body[m.end():end])
         last = re.search(r"Letzter Beitrag\s*(.*)", info)
         out.append({"thr": m.group(2), "title": title,
                     "last": parse_date(last.group(1) if last else info, today)})
@@ -78,8 +74,8 @@ def thread_posts(il, ref: str, thr: str, today: dt.date,
             head = part.split('class="ilFrmPostTitle', 1)[0]
             content = re.search(r'class="ilFrmPostContent"[^>]*>(.*?)(?:class="ilFrmPostCommands|$)',
                                 part, re.S)
-            when = parse_date(_text(head), today)
-            text = _text(content.group(1)) if content else ""
+            when = parse_date(strip_tags(head), today)
+            text = strip_tags(content.group(1)) if content else ""
             if when and text:
                 posts.append({"when": when, "by": "老师/助教" if "Moderation" in head else "学生",
                               "text": text[:chars]})

@@ -2,7 +2,7 @@
 """
 安装向导 + 课程列表的测试：不联网、不需要账号、0 token（GitHub Actions 里也跑）
 
-  python3 tests/test_setup.py
+  python3 tests/test_wizard.py
 
 测试数据全是编的，不含真实课程编号和人名。
 """
@@ -23,7 +23,7 @@ HERE = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(HERE))
 import i18n  # noqa: E402
 import ilias_courses as ic  # noqa: E402
-import setup as wiz  # noqa: E402
+import wizard as wiz  # noqa: E402
 
 results: list[tuple[str, bool, str]] = []
 
@@ -70,7 +70,7 @@ class FakeIlias:
 
 
 def run_wizard(data: Path, answers: list[str], *args: str) -> subprocess.CompletedProcess:
-    return subprocess.run([sys.executable, str(HERE / "setup.py"), "--no-check", *args],
+    return subprocess.run([sys.executable, str(HERE / "wizard.py"), "--no-check", *args],
                           input="\n".join(answers) + "\n", capture_output=True, text=True,
                           encoding="utf-8", env={**os.environ, "DATA_DIR": str(data)},
                           cwd=HERE, timeout=60)
@@ -120,7 +120,7 @@ def part_courses() -> None:
 
 
 def part_pieces() -> None:
-    print("\n========== 向导的零件（setup.py）==========")
+    print("\n========== 向导的零件（wizard.py）==========")
     check("输入序号", wiz.parse_numbers("1 3, 4，2", 5) == [1, 3, 4, 2]
           and wiz.parse_numbers("1 1", 3) == [1] and wiz.parse_numbers("6", 5) is None
           and wiz.parse_numbers("a", 5) is None)

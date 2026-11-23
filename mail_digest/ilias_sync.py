@@ -26,16 +26,14 @@ import tomllib
 import urllib.parse
 import urllib.request
 from pathlib import Path
-from zoneinfo import ZoneInfo
 
 import forums as forums_mod
 import i18n
-from digest import DATA, load_env, secret, send_telegram
+from common import (DATA, TZ, load_env, load_json, now, save_json, secret, send_telegram,
+                    strip_tags)
 from i18n import tr
 
-HERE = Path(__file__).resolve().parent
 ILIAS = "https://ilias.studium.kit.edu"
-TZ = ZoneInfo("Europe/Berlin")
 STATE_FILE = DATA / "ilias_state.json"
 DEADLINES_FILE = DATA / "deadlines.json"
 LOCK_FILE = DATA / "deadlines.lock"
@@ -67,24 +65,8 @@ NOT_EXERCISE = re.compile(r"lösung|loesung|solution|folie|slides|klausur|exam|t
 
 # ---------------------------------------------------------------- Utilities
 
-def now() -> dt.datetime:
-    return dt.datetime.now(TZ)
-
-
 def h(s: str) -> str:
     return hashlib.sha1(s.encode("utf-8")).hexdigest()[:16]
-
-
-def load_json(path: Path, default):
-    if path.exists():
-        return json.loads(path.read_text(encoding="utf-8"))
-    return default
-
-
-def save_json(path: Path, data) -> None:
-    tmp = path.with_suffix(".tmp")
-    tmp.write_text(json.dumps(data, ensure_ascii=False, indent=1), encoding="utf-8")
-    tmp.replace(path)
 
 
 @contextlib.contextmanager
@@ -108,10 +90,6 @@ def is_future(d: dict) -> bool:
 def upcoming(store: list[dict]) -> list[dict]:
     """Return deadlines that have not passed and are not marked done."""
     return [d for d in store if is_future(d) and not d.get("done")]
-
-
-def text_of(fragment: str) -> str:
-    return re.sub(r"\s+", " ", html.unescape(re.sub(r"<[^>]+>", " ", fragment))).strip()
 
 
 def fmt_due(d: dict) -> str:
@@ -293,7 +271,7 @@ def crawl(il: Ilias, course: dict, seen: dict, skip_folders: re.Pattern | None,
         # New files: read PDFs only when their name or folder resembles an assignment; main marks them seen after reading.
         folder = path.rsplit(" › ", 1)[-1]
         for fref, label in FILE_LINK.findall(body):
-            label = text_of(label)
+            label = strip_tags(label)
             if published is not None and label and not NOT_EXERCISE.search(label):
                 published.update(int(n) for n in SHEET_NO.findall(label))
             if not label or label == "Download" or f"file:{fref}" in seen:
@@ -307,11 +285,11 @@ def crawl(il: Ilias, course: dict, seen: dict, skip_folders: re.Pattern | None,
         # Descend into folders, group blocks, exercises, and the user's Tutorium.
         # Record forums for the daily summary; see forums.py.
         for fref, label in FORUM_LINK.findall(body):
-            label = text_of(label)
+            label = strip_tags(label)
             if label and fref not in forums:
                 forums[fref] = {"course": name, "name": label}
         for ckind, cref, label in OBJ_LINK.findall(body):
-            label = text_of(label)
+            label = strip_tags(label)
             if published is not None and ckind == "exc" and not NOT_EXERCISE.search(label):
                 published.update(int(n) for n in SHEET_NO.findall(label))
             if (ckind, cref) in visited or not label or depth >= 4:

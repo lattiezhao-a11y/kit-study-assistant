@@ -16,12 +16,10 @@ import sys
 import threading
 import time
 from pathlib import Path
-from zoneinfo import ZoneInfo
 
-from digest import DATA
+from common import DATA, TZ, save_json
 
 HERE = Path(__file__).resolve().parent
-TZ = ZoneInfo("Europe/Berlin")
 STATE_FILE = DATA / "scheduler_state.json"   # Last scheduled slot executed for each job.
 TICK = 20                 # Seconds between time checks.
 ON_TIME = 120             # Execution window for non-catch-up jobs; old reminders are not sent after restart.
@@ -91,10 +89,7 @@ def load_state() -> dict[str, dt.datetime]:
 
 
 def save_state(state: dict[str, dt.datetime]) -> None:
-    tmp = STATE_FILE.with_suffix(".tmp")
-    tmp.write_text(json.dumps({k: v.isoformat() for k, v in state.items()}, indent=1),
-                   encoding="utf-8")
-    tmp.replace(STATE_FILE)
+    save_json(STATE_FILE, {k: v.isoformat() for k, v in state.items()})
 
 
 class Runner:

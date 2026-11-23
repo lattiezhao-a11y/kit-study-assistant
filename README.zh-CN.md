@@ -15,6 +15,13 @@
 
 > 这是我给自己这学期做的工具。从 2026 年 11 月起，每天在一台树莓派 4 上运行。
 
+<p>
+  <img src="docs/screenshots/digest.jpg" width="200" alt="定时推送邮件摘要和新作业">
+  <img src="docs/screenshots/ask-deadlines.jpg" width="200" alt="主动询问截止时间">
+  <img src="docs/screenshots/forum.jpg" width="200" alt="追问论坛等内容">
+  <img src="docs/screenshots/language.jpg" width="200" alt="中德双语，随时切换">
+</p>
+
 ## 为什么要做
 
 在 KIT 读书，要管的事散在很多地方：

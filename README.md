@@ -15,13 +15,12 @@ It runs on a Raspberry Pi or any small server (Docker) and speaks Chinese or Ger
 
 > I built this for my own semester. It has been running every day on a Raspberry Pi 4 since November 2026.
 
-<!-- Screenshots: add 2–3 images to docs/screenshots/ and uncomment.
 <p>
-  <img src="docs/screenshots/morning.png" width="260" alt="Morning summary">
-  <img src="docs/screenshots/digest.png" width="260" alt="Email digest">
-  <img src="docs/screenshots/chat.png" width="260" alt="Chat with the bot">
+  <img src="docs/screenshots/digest-en.jpg" width="200" alt="Scheduled email digest and new ILIAS deadlines">
+  <img src="docs/screenshots/ask-deadlines-en.jpg" width="200" alt="Asking for this week's deadlines">
+  <img src="docs/screenshots/forum-en.jpg" width="200" alt="Asking about recent forum threads">
+  <img src="docs/screenshots/language-en.jpg" width="200" alt="Chinese / German, switch any time">
 </p>
--->
 
 ## Why I built this
 

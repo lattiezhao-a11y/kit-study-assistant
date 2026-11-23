@@ -15,13 +15,12 @@ Er läuft auf einem Raspberry Pi oder einem beliebigen kleinen Server (Docker) u
 
 > Ich habe das für mein eigenes Semester gebaut. Seit November 2026 läuft es jeden Tag auf einem Raspberry Pi 4.
 
-<!-- Screenshots: 2–3 Bilder in docs/screenshots/ ablegen und den Kommentar entfernen.
 <p>
-  <img src="docs/screenshots/morning.png" width="260" alt="Morgenübersicht">
-  <img src="docs/screenshots/digest.png" width="260" alt="Mail-Zusammenfassung">
-  <img src="docs/screenshots/chat.png" width="260" alt="Chat mit dem Bot">
+  <img src="docs/screenshots/digest-en.jpg" width="200" alt="Geplante Mail-Zusammenfassung und neue ILIAS-Fristen">
+  <img src="docs/screenshots/ask-deadlines-en.jpg" width="200" alt="Nach den Fristen dieser Woche fragen">
+  <img src="docs/screenshots/forum-en.jpg" width="200" alt="Nach neuen Forenthreads fragen">
+  <img src="docs/screenshots/language-en.jpg" width="200" alt="Deutsch / Chinesisch, jederzeit umschaltbar">
 </p>
--->
 
 ## Warum ich das gebaut habe
 

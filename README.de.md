@@ -81,6 +81,8 @@ Der Bot hat 21 Werkzeuge:
 
 ## Aufbau
 
+Das ist eine Pipeline plus ein Tool-Calling-Agent, und du redest mit ihm über Telegram.
+
 ```mermaid
 flowchart LR
     subgraph SRC["Wo deine Informationen liegen"]
@@ -108,9 +110,9 @@ flowchart LR
     D & I & F & B -.-> LLM["KI-API<br/>OpenAI-kompatibel"]
 ```
 
-- **Jede Quelle hat ihr eigenes kleines Skript**, das nach Zeitplan läuft (auf dem Pi mit systemd, in Docker mit `scheduler.py`). Es sind einfache Skripte, keine Agenten: Jeder Lauf macht höchstens einen gebündelten KI-Aufruf.
+- **Pipeline: Jede Quelle hat ihr eigenes kleines Skript**, das nach Zeitplan läuft (auf dem Pi mit systemd, in Docker mit `scheduler.py`). Es sind einfache Skripte, keine Agenten: Jeder Lauf macht höchstens einen gebündelten KI-Aufruf.
 - **Alle landen in denselben Datendateien.** Mails, ILIAS und der Bot schreiben in eine Fristenliste (`deadlines.json`, geschützt durch eine Dateisperre). So kommen eine Frist aus einem PDF und ihre Verschiebung per Mail an derselben Stelle an.
-- **Der Chat-Bot ist eine minimale Tool-Calling-Schleife** (`bot.py`, etwa 500 Zeilen). Er nutzt Telegram-Long-Polling, es wird also kein Port geöffnet. Er antwortet nur deiner eigenen Chat-ID und vergisst das Gespräch nach 1 Stunde Pause.
+- **Agent: Der Chat-Bot ist eine minimale Tool-Calling-Schleife** (`bot.py`, etwa 500 Zeilen). Das Modell entscheidet, welche der 21 Werkzeuge es aufruft und wann es fertig ist, höchstens 6 Runden pro Nachricht; Änderungen an Einstellungen musst du trotzdem bestätigen. Er nutzt Telegram-Long-Polling, es wird also kein Port geöffnet. Er antwortet nur deiner eigenen Chat-ID und vergisst das Gespräch nach 1 Stunde Pause.
 - **Eine neue Quelle hinzufügen** heißt: ein weiteres Skript, das in dieselben Dateien schreibt und an denselben Chat sendet.
 
 ## Designentscheidungen

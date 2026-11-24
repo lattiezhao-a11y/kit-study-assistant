@@ -81,8 +81,7 @@ Der Bot hat 21 Werkzeuge:
 
 ## Aufbau
 
-**In einem Satz: eine zeitgesteuerte KI-Pipeline + ein Tool-Calling-Agent, hinter einem Telegram-Chat.**
-Die Pipeline meldet sich nach Zeitplan; der Agent antwortet, wenn du fragst.
+Das ist eine Pipeline plus ein Tool-Calling-Agent, und du redest mit ihm über Telegram.
 
 ```mermaid
 flowchart LR

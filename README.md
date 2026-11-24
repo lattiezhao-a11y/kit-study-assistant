@@ -81,8 +81,7 @@ The bot has 21 tools:
 
 ## Architecture
 
-**In one line: a scheduled LLM pipeline + a tool-calling agent, behind one Telegram chat.**
-The pipeline pushes to you on a timer; the agent answers when you ask.
+It's a pipeline plus a tool-calling agent, and you talk to it through Telegram.
 
 ```mermaid
 flowchart LR

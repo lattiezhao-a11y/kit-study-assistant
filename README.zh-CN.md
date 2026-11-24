@@ -81,8 +81,7 @@
 
 ## 架构
 
-**一句话：定时的 AI 流水线（pipeline）+ 会调用工具的 agent（tool-calling agent），外面套一个 Telegram 对话。**
-流水线按时间表主动推送给你；agent 在你提问时回答。
+这是个流水线，再加上一个 tool call agent，最后通过 Telegram 对话。
 
 ```mermaid
 flowchart LR

@@ -81,6 +81,9 @@ The bot has 21 tools:
 
 ## Architecture
 
+**In one line: a scheduled LLM pipeline + a tool-calling agent, behind one Telegram chat.**
+The pipeline pushes to you on a timer; the agent answers when you ask.
+
 ```mermaid
 flowchart LR
     subgraph SRC["Where your information lives"]
@@ -108,9 +111,9 @@ flowchart LR
     D & I & F & B -.-> LLM["LLM API<br/>OpenAI-compatible"]
 ```
 
-- **Every source has its own small script** that runs on a timer (systemd on the Pi, `scheduler.py` in Docker). They are plain scripts, not agents: each run makes at most one batched LLM call.
+- **Pipeline: every source has its own small script** that runs on a timer (systemd on the Pi, `scheduler.py` in Docker). They are plain scripts, not agents: each run makes at most one batched LLM call.
 - **They all meet in the same data files.** Email, ILIAS and the bot write to one deadline list (`deadlines.json`, protected by a file lock), so a deadline from a PDF and its postponement from an email end up in the same place.
-- **The chat bot is a minimal tool-calling loop** (`bot.py`, about 500 lines). It uses Telegram long polling, so no port is opened. It only answers your own chat ID and forgets the conversation after 1 hour idle.
+- **Agent: the chat bot is a minimal tool-calling loop** (`bot.py`, about 500 lines). The model picks which of the 21 tools to call and when to stop, up to 6 rounds per message; settings changes still need your confirmation. It uses Telegram long polling, so no port is opened. It only answers your own chat ID and forgets the conversation after 1 hour idle.
 - **Adding a source** means one more script that writes to the same files and sends to the same chat.
 
 ## Design decisions
